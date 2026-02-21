@@ -51,7 +51,7 @@ public final class Tasks {
      *        .onError(e -> player.sendMessage("Failed!"));
      */
     public static <T> io.github.fragmer2.bslib.api.thread.AsyncChain<T> compute(java.util.function.Supplier<T> supplier) {
-        return new io.github.fragmer2.bslib.api.thread.AsyncChain<>(supplier);
+        return new io.github.fragmer2.bslib.api.thread.AsyncChain<T>(supplier);
     }
 
     public static class TaskBuilder {

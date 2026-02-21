@@ -316,9 +316,9 @@ public class ReactiveMenu {
             // Build the item
             ItemStack finalItem = item;
             if (finalItem == null && material != null) {
-                Item.Builder builder = Item.of(material);
-                if (text != null) builder = builder.name(text);
-                if (lore != null) builder = builder.lore(lore.toArray(new String[0]));
+                Item builder = Item.of(material);
+                if (text != null) builder.name(text);
+                if (lore != null) builder.lore(lore.toArray(new String[0]));
                 finalItem = builder.build();
             }
             if (finalItem == null) finalItem = new ItemStack(Material.BARRIER);

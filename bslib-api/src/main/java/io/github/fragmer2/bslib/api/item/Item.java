@@ -3,6 +3,7 @@ package io.github.fragmer2.bslib.api.item;
 import io.github.fragmer2.bslib.api.placeholder.Placeholders;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
@@ -18,7 +19,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public class Item {
-    private static final MiniMessage MM = MiniMessage.miniMessage();
+    private static final LegacyComponentSerializer LEGACY_SERIALIZER = LegacyComponentSerializer.legacySection();
 
     private final Material material;
     private int amount = 1;
@@ -126,14 +127,14 @@ public class Item {
         // Имя
         if (displayName != null) {
             String processed = (player != null) ? Placeholders.apply(player, displayName) : displayName;
-            meta.displayName(MM.deserialize(processed));
+            meta.displayName(LEGACY_SERIALIZER.deserialize(processed));
         }
 
         // Lore
         if (!lore.isEmpty()) {
             List<Component> loreComponents = lore.stream()
                 .map(line -> (player != null) ? Placeholders.apply(player, line) : line)
-                .map(MM::deserialize)
+                .map(LEGACY_SERIALIZER::deserialize)
                 .collect(Collectors.toList());
             meta.lore(loreComponents);
         }

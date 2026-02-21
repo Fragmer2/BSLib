@@ -51,7 +51,7 @@ public class AsyncChain<T> {
     private volatile boolean cancelled = false;
     private volatile Future<?> future;
 
-    AsyncChain(Supplier<T> computation) {
+    public AsyncChain(Supplier<T> computation) {
         this.computation = computation;
     }
 
