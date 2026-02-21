@@ -1,5 +1,16 @@
-target/
-.metadata/
+# Eclipse
+.project
+.classpath
 .settings/
+.metadata/
+
+# Maven
+target/
+
+# IntelliJ
 .idea/
-*.log
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
