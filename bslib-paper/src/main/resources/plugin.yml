@@ -1,0 +1,5 @@
+name: BSLib
+version: 1.0.0-SNAPSHOT
+main: io.github.fragmer2.bslib.paper.BSLibPlugin
+api-version: "1.21"
+description: Modern library for Paper plugins
