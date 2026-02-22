@@ -2,13 +2,19 @@ package io.github.fragmer2.bslib.paper.command;
 
 import org.bukkit.entity.Player;
 
-import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Manages command-specific cooldowns for the Paper command framework.
+ *
+ * Each cooldown is identified by a composite key of player UUID + command key.
+ * Expired cooldowns are lazily cleaned up on access, and can also be
+ * bulk-cleaned via {@link #cleanup()} or {@link #clearPlayer(Player)}.
+ */
 public class CooldownManager {
-    private final Map<String, Long> cooldowns = new HashMap<>();
+    private final Map<String, Long> cooldowns = new ConcurrentHashMap<>();
 
     public void setCooldown(Player player, String key, long duration, TimeUnit unit) {
         String id = player.getUniqueId() + ":" + key;
@@ -37,5 +43,22 @@ public class CooldownManager {
             return 0;
         }
         return unit.convert(remaining, TimeUnit.MILLISECONDS);
+    }
+
+    /** Remove all cooldowns for a specific player. */
+    public void clearPlayer(Player player) {
+        String prefix = player.getUniqueId() + ":";
+        cooldowns.keySet().removeIf(k -> k.startsWith(prefix));
+    }
+
+    /** Remove all expired cooldown entries from memory. */
+    public void cleanup() {
+        long now = System.currentTimeMillis();
+        cooldowns.entrySet().removeIf(e -> e.getValue() < now);
+    }
+
+    /** Clear all cooldowns. */
+    public void clear() {
+        cooldowns.clear();
     }
 }

@@ -7,17 +7,29 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.*;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Central GUI manager that handles menu lifecycle, event routing, and refresh polling.
+ *
+ * Responsibilities:
+ * - Tracks all open menu views per player
+ * - Handles inventory click/drag/close events and routes them to the correct menu
+ * - Polls reactive menus and dynamic buttons for updates every 2 ticks
+ * - Manages menu navigation history (back button support)
+ * - Cleans up resources on player quit
+ */
 public class GuiManager implements Listener {
-    private final Map<UUID, MenuViewImpl> openViews = new HashMap<>();
-    private final Map<UUID, Deque<Menu>> history = new HashMap<>();
-    private final Set<UUID> skipCloseEvent = new HashSet<>();
+    private final Map<UUID, MenuViewImpl> openViews = new ConcurrentHashMap<>();
+    private final Map<UUID, Deque<Menu>> history = new ConcurrentHashMap<>();
+    private final Set<UUID> skipCloseEvent = ConcurrentHashMap.newKeySet();
     private BukkitTask refreshTask;
-    private JavaPlugin plugin; // FIX: store plugin reference (was using getPlugins()[0])
+    private JavaPlugin plugin;
 
     public void register(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -27,21 +39,38 @@ public class GuiManager implements Listener {
 
     private void startRefreshTask(JavaPlugin plugin) {
         refreshTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
-            for (MenuViewImpl view : openViews.values()) {
-                // Check DeclarativeMenu bindings → full re-render if changed
-                if (io.github.fragmer2.bslib.api.menu.ReactiveMenu.isDeclarative(view.getMenu())) {
-                    if (io.github.fragmer2.bslib.api.menu.ReactiveMenu.checkRerender(view.getMenu())) {
-                        view.render(); // full re-render (buttons changed)
+            // Iterate over a snapshot to avoid ConcurrentModificationException
+            for (MenuViewImpl view : new ArrayList<>(openViews.values())) {
+                try {
+                    // Check DeclarativeMenu bindings → full re-render if changed
+                    if (io.github.fragmer2.bslib.api.menu.ReactiveMenu.isDeclarative(view.getMenu())) {
+                        if (io.github.fragmer2.bslib.api.menu.ReactiveMenu.checkRerender(view.getMenu())) {
+                            view.render(); // full re-render (buttons changed)
+                        }
                     }
+                    view.refreshDynamicSlots();
+                    view.tickAnimations();
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Error refreshing menu for " +
+                            view.getPlayer().getName() + ": " + e.getMessage());
                 }
-                view.refreshDynamicSlots();
-                view.tickAnimations();
             }
         }, 2L, 2L);
     }
 
     public void cancel() {
         if (refreshTask != null) refreshTask.cancel();
+        // Close all open menus on shutdown
+        for (Map.Entry<UUID, MenuViewImpl> entry : openViews.entrySet()) {
+            try {
+                MenuViewImpl view = entry.getValue();
+                view.getMenu().onClose(view);
+                view.close();
+            } catch (Exception ignored) {}
+        }
+        openViews.clear();
+        history.clear();
+        skipCloseEvent.clear();
     }
 
     public void openMenu(Player player, Menu menu) {
@@ -84,6 +113,11 @@ public class GuiManager implements Listener {
     public Menu getCurrentMenu(Player player) {
         MenuViewImpl view = openViews.get(player.getUniqueId());
         return view != null ? view.getMenu() : null;
+    }
+
+    /** Check if a player currently has a BSLib menu open. */
+    public boolean hasOpenMenu(Player player) {
+        return openViews.containsKey(player.getUniqueId());
     }
 
     public void closeMenu(Player player) {
@@ -182,5 +216,22 @@ public class GuiManager implements Listener {
             view.getMenu().onClose(view);
         }
         history.remove(uuid);
+    }
+
+    /**
+     * Clean up all GUI state when a player quits.
+     * Prevents memory leaks from abandoned menu views and history stacks.
+     */
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        MenuViewImpl view = openViews.remove(uuid);
+        if (view != null) {
+            try {
+                view.getMenu().onClose(view);
+            } catch (Exception ignored) {}
+        }
+        history.remove(uuid);
+        skipCloseEvent.remove(uuid);
     }
 }

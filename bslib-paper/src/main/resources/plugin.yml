@@ -3,3 +3,28 @@ version: 1.0.0-SNAPSHOT
 main: io.github.fragmer2.bslib.paper.BSLibPlugin
 api-version: "1.21"
 description: Modern library for Paper plugins
+author: fragmer2
+
+commands:
+  bslib:
+    description: BSLib management commands
+    usage: /<command> [debug|dev|reload|plugins]
+    permission: bslib.admin
+
+permissions:
+  bslib.admin:
+    description: Access to all BSLib admin commands
+    default: op
+    children:
+      bslib.debug: true
+      bslib.dev: true
+      bslib.reload: true
+  bslib.debug:
+    description: Access to /bslib debug and /bslib plugins
+    default: op
+  bslib.dev:
+    description: Access to /bslib dev (GUI inspector)
+    default: op
+  bslib.reload:
+    description: Access to /bslib reload
+    default: op

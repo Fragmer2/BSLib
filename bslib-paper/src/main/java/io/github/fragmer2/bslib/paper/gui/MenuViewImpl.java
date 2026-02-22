@@ -14,10 +14,18 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+/**
+ * Concrete implementation of {@link MenuView} for Paper servers.
+ *
+ * Each MenuViewImpl represents one player's open menu session. It manages:
+ * - The Bukkit Inventory that the player sees
+ * - Rendering buttons into ItemStacks
+ * - Diffing rendered items to avoid unnecessary inventory updates
+ * - Slot-level animations with frame timing
+ * - Per-view state storage (key-value pairs)
+ */
 public class MenuViewImpl implements MenuView {
     private final Player player;
     private final Menu menu;
@@ -43,6 +51,10 @@ public class MenuViewImpl implements MenuView {
         return menu;
     }
 
+    /**
+     * Refresh only dynamic and reactive button slots.
+     * Uses item diffing to avoid unnecessary inventory updates.
+     */
     public void refreshDynamicSlots() {
         String menuClass = menu.getClass().getSimpleName();
         menu.getButtons().forEach((slot, button) -> {
@@ -82,9 +94,15 @@ public class MenuViewImpl implements MenuView {
         animStates.put(slot, state);
     }
 
+    /**
+     * Advance all active animations by one tick.
+     * Uses Iterator to safely remove completed non-looping animations during iteration.
+     */
     public void tickAnimations() {
         long now = System.currentTimeMillis();
-        for (Map.Entry<Integer, AnimationState> entry : animStates.entrySet()) {
+        Iterator<Map.Entry<Integer, AnimationState>> it = animStates.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, AnimationState> entry = it.next();
             int slot = entry.getKey();
             AnimationState state = entry.getValue();
             if (now >= state.nextUpdate) {
@@ -94,7 +112,7 @@ public class MenuViewImpl implements MenuView {
                     if (state.anim.isLoop()) {
                         nextFrame = 0;
                     } else {
-                        animStates.remove(slot);
+                        it.remove(); // Safe removal via Iterator
                         continue;
                     }
                 }
@@ -106,13 +124,18 @@ public class MenuViewImpl implements MenuView {
         }
     }
 
+    /** Stop all animations for this view. */
+    public void stopAnimations() {
+        animStates.clear();
+    }
+
     @Override
     public Player getPlayer() { return player; }
 
     public void open() {
         render();
         player.openInventory(inventory);
-        // Запускаем анимации для кнопок, у которых есть анимация
+        // Start animations for buttons that have them
         menu.getButtons().forEach((slot, button) -> {
             if (button.getAnimation() != null) {
                 startAnimation(slot, button.getAnimation());
@@ -120,8 +143,12 @@ public class MenuViewImpl implements MenuView {
         });
     }
 
+    /**
+     * Full render: clears the inventory and re-renders all buttons.
+     */
     public void render() {
         inventory.clear();
+        lastRendered.clear();
         menu.getButtons().forEach((slot, button) -> {
             ItemStack item = button.render(this);
             inventory.setItem(slot, item);
@@ -136,11 +163,17 @@ public class MenuViewImpl implements MenuView {
         Button button = menu.getButtons().get(slot);
         if (button == null) return;
         if (button.shouldCancel()) event.setCancelled(true);
-        button.onClick(new ClickContext(player, event, this));
+        try {
+            button.onClick(new ClickContext(player, event, this));
+        } catch (Exception e) {
+            player.sendMessage("\u00a7cAn error occurred while processing your click.");
+            e.printStackTrace();
+        }
     }
 
     @Override
     public void close() {
+        stopAnimations();
         if (updateTask != null) {
             updateTask.cancel();
             updateTask = null;

@@ -2,7 +2,6 @@ package io.github.fragmer2.bslib.paper.command;
 
 import io.github.fragmer2.bslib.api.command.*;
 import io.github.fragmer2.bslib.api.command.Optional;
-import io.github.fragmer2.bslib.paper.command.CooldownManager;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.World;
