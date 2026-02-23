@@ -5,11 +5,12 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.plugin.RegisteredListener;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 /**
  * Developer debug mode.
@@ -64,6 +65,39 @@ public final class Debug {
         if (!enabled) return;
         long elapsed = System.nanoTime() - startNano;
         timings.computeIfAbsent(label, k -> new TimingData()).record(elapsed);
+    }
+
+
+    public static TraceScope trace(String label) {
+        return new TraceScope(label, startTiming());
+    }
+
+    public static <T> T trace(String label, Supplier<T> supplier) {
+        long start = startTiming();
+        try {
+            return supplier.get();
+        } finally {
+            endTiming(label, start);
+        }
+    }
+
+    public static final class TraceScope implements AutoCloseable {
+        private final String label;
+        private final long start;
+        private boolean closed;
+
+        private TraceScope(String label, long start) {
+            this.label = label;
+            this.start = start;
+        }
+
+        @Override
+        public void close() {
+            if (!closed) {
+                endTiming(label, start);
+                closed = true;
+            }
+        }
     }
 
     // ========== Report ==========
@@ -127,6 +161,39 @@ public final class Debug {
         sender.sendMessage("§6§lThreads:");
         sender.sendMessage("  §7Main thread: §f" + (Bukkit.isPrimaryThread() ? "§aYes" : "§cNo"));
         sender.sendMessage("  §7Active threads: §f" + Thread.activeCount());
+    }
+
+    public static Map<String, String> timingSummary() {
+        Map<String, String> result = new LinkedHashMap<>();
+        timings.forEach((label, data) -> {
+            double avgMs = data.avgNanos() / 1_000_000.0;
+            result.put(label, String.format("avg=%.3fms,count=%d,max=%.3fms", avgMs, data.count.get(), data.maxNanos.get() / 1_000_000.0));
+        });
+        return result;
+    }
+
+    public static void doctor(CommandSender sender, org.bukkit.plugin.Plugin plugin) {
+        sender.sendMessage("§6§l=== BSLib Doctor ===");
+        report(sender);
+
+        int listenerCount = 0;
+        for (HandlerList hl : HandlerList.getHandlerLists()) {
+            listenerCount += hl.getRegisteredListeners().length;
+        }
+
+        sender.sendMessage("");
+        sender.sendMessage("§6§lFramework checks:");
+        sender.sendMessage("  §7Services registered: §f" + io.github.fragmer2.bslib.api.service.Services.registeredCount());
+        sender.sendMessage("  §7Services lazy: §f" + io.github.fragmer2.bslib.api.service.Services.lazyCount());
+        sender.sendMessage("  §7Reactive player bindings: §f" + io.github.fragmer2.bslib.api.reactive.ReactiveBinding.activePlayerCount());
+        sender.sendMessage("  §7Reactive total bindings: §f" + io.github.fragmer2.bslib.api.reactive.ReactiveBinding.activeBindingCount());
+        sender.sendMessage("  §7Tracked tasks (potential leaks): §f" + io.github.fragmer2.bslib.api.task.Tasks.trackedTaskCount());
+        sender.sendMessage("  §7Registered listeners: §f" + listenerCount);
+        sender.sendMessage("  §7GUI avg refresh: §f" + String.format("%.3fms", io.github.fragmer2.bslib.api.debug.GuiInspector.averageRenderMillis()));
+
+        long pluginPending = org.bukkit.Bukkit.getScheduler().getPendingTasks().stream()
+                .filter(t -> t.getOwner() == plugin).count();
+        sender.sendMessage("  §7Pending scheduler tasks for " + plugin.getName() + ": §f" + pluginPending);
     }
 
     /** Reset all timing data. */

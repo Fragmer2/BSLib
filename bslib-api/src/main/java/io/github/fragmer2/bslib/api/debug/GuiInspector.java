@@ -135,6 +135,13 @@ public final class GuiInspector {
         devPlayers.remove(player.getUniqueId());
     }
 
+    public static double averageRenderMillis() {
+        return renderStats.values().stream()
+                .mapToDouble(stats -> stats.avgRenderNanos() / 1_000_000.0)
+                .average()
+                .orElse(0.0);
+    }
+
     // ========== Stats ==========
 
     private static class RenderStats {
