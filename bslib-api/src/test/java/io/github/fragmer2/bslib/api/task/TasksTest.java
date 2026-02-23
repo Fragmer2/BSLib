@@ -51,6 +51,18 @@ class TasksTest {
     }
 
     @Test
+    void runTrackedReturnsFrameworkTaskHandle() {
+        FakeRuntime runtime = new FakeRuntime();
+        Tasks.init(runtime.plugin());
+
+        FrameworkTask task = Tasks.sync().repeat(20).runTracked(() -> {});
+        assertEquals(1, Tasks.trackedTaskCount());
+
+        task.cancel();
+        assertEquals(0, Tasks.trackedTaskCount());
+    }
+
+    @Test
     void stressTenThousandTasksCancelWithoutLeaks() {
         FakeRuntime runtime = new FakeRuntime();
         Tasks.init(runtime.plugin());
@@ -72,7 +84,6 @@ class TasksTest {
     private static final class FakeRuntime {
         private final AtomicInteger nextId = new AtomicInteger(1);
         private final Map<Integer, TaskState> states = new ConcurrentHashMap<>();
-        private final ThreadLocal<Integer> currentTaskId = new ThreadLocal<>();
 
         private final BukkitScheduler scheduler = (BukkitScheduler) Proxy.newProxyInstance(
                 BukkitScheduler.class.getClassLoader(),
@@ -112,10 +123,6 @@ class TasksTest {
                         case "isCurrentlyRunning" -> {
                             Integer id = (Integer) args[0];
                             yield id.equals(currentTaskId.get());
-                        }
-                        case "getCurrentTask" -> {
-                            Integer id = currentTaskId.get();
-                            yield id == null ? null : states.get(id).task;
                         }
                         default -> throw new UnsupportedOperationException("Unsupported scheduler method: " + name);
                     };
@@ -169,11 +176,9 @@ class TasksTest {
         }
 
         private void runTaskNow(TaskState state, Runnable action) {
-            currentTaskId.set(state.id);
             try {
                 action.run();
             } finally {
-                currentTaskId.remove();
                 if (!state.repeating || state.cancelled) {
                     state.queued = false;
                 }

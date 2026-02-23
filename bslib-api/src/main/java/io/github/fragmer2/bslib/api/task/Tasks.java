@@ -1,27 +1,22 @@
 package io.github.fragmer2.bslib.api.task;
 
+import io.github.fragmer2.bslib.internal.error.FrameworkExceptionHandler;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.lang.reflect.Proxy;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Consumer;
 
 /**
  * Clean scheduler API.
- *
- * Usage:
- *   Tasks.sync().run(() -> player.sendMessage("hi"));
- *   Tasks.async().delay(20).run(() -> loadData());
- *   Tasks.sync().delay(10).repeat(20).run(() -> tick());
- *   Tasks.sync().delay(5).run(task -> { if (done) task.cancel(); });
  */
 public final class Tasks {
     private static Plugin plugin;
-    private static final Set<Integer> trackedTaskIds = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentMap<Integer, FrameworkTaskImpl> trackedTasks = new ConcurrentHashMap<>();
 
     private Tasks() {}
 
@@ -31,66 +26,28 @@ public final class Tasks {
 
     public static int trackedTaskCount() {
         cleanupTrackedTasks();
-        return trackedTaskIds.size();
+        return trackedTasks.size();
     }
 
-    private static void trackTask(BukkitTask task) {
-        if (task != null) trackedTaskIds.add(task.getTaskId());
+    private static FrameworkTask register(BukkitTask task) {
+        FrameworkTaskImpl wrapped = new FrameworkTaskImpl(task);
+        trackedTasks.put(task.getTaskId(), wrapped);
+        return wrapped;
     }
 
-    private static void untrackTask(BukkitTask task) {
-        if (task != null) trackedTaskIds.remove(task.getTaskId());
-    }
-
-
-    private static BukkitTask wrapTrackedTask(BukkitTask delegate) {
-        if (delegate == null) return null;
-        return (BukkitTask) Proxy.newProxyInstance(
-                BukkitTask.class.getClassLoader(),
-                new Class[]{BukkitTask.class},
-                (proxy, method, args) -> {
-                    String name = method.getName();
-                    if ("cancel".equals(name)) {
-                        try {
-                            return method.invoke(delegate, args);
-                        } finally {
-                            untrackTask(delegate);
-                        }
-                    }
-                    if ("equals".equals(name) && args != null && args.length == 1) {
-                        return proxy == args[0];
-                    }
-                    if ("hashCode".equals(name) && (args == null || args.length == 0)) {
-                        return System.identityHashCode(proxy);
-                    }
-                    if ("toString".equals(name) && (args == null || args.length == 0)) {
-                        return "TrackedTask(" + delegate + ")";
-                    }
-                    return method.invoke(delegate, args);
-                }
-        );
-    }
-
-    private static Runnable wrapRunnable(Runnable runnable, boolean repeating) {
-        Objects.requireNonNull(runnable, "runnable");
-        if (repeating) {
-            return runnable;
-        }
-        return () -> {
-            try {
-                runnable.run();
-            } finally {
-                BukkitTask current = plugin.getServer().getScheduler().getCurrentTask();
-                if (current != null) {
-                    untrackTask(current);
-                }
-            }
-        };
+    private static void unregister(int taskId) {
+        trackedTasks.remove(taskId);
     }
 
     private static void cleanupTrackedTasks() {
-        if (plugin == null) return;
-        trackedTaskIds.removeIf(id -> !plugin.getServer().getScheduler().isQueued(id) && !plugin.getServer().getScheduler().isCurrentlyRunning(id));
+        if (plugin == null) {
+            return;
+        }
+        trackedTasks.entrySet().removeIf(entry -> {
+            int id = entry.getKey();
+            return !plugin.getServer().getScheduler().isQueued(id)
+                    && !plugin.getServer().getScheduler().isCurrentlyRunning(id);
+        });
     }
 
     public static TaskBuilder sync() {
@@ -101,30 +58,15 @@ public final class Tasks {
         return new TaskBuilder(plugin, true);
     }
 
-    /**
-     * Quick timer: Tasks.timer(20).run(() -> {});
-     * Equivalent to Tasks.sync().repeat(interval).run(...)
-     */
     public static TaskBuilder timer(long intervalTicks) {
         return new TaskBuilder(plugin, false).repeat(intervalTicks);
     }
 
-    /**
-     * Start an async computation chain.
-     *
-     *   Tasks.compute(() -> heavyDatabaseQuery())
-     *        .thenSync(result -> player.sendMessage("Got: " + result));
-     *
-     *   Tasks.compute(() -> loadFromDB(uuid))
-     *        .thenAsync(data -> enrichWithAPI(data))
-     *        .thenSync(enriched -> applyToPlayer(player, enriched))
-     *        .onError(e -> player.sendMessage("Failed!"));
-     */
     public static <T> io.github.fragmer2.bslib.api.thread.AsyncChain<T> compute(java.util.function.Supplier<T> supplier) {
-        return new io.github.fragmer2.bslib.api.thread.AsyncChain<T>(supplier);
+        return new io.github.fragmer2.bslib.api.thread.AsyncChain<>(supplier);
     }
 
-    public static class TaskBuilder {
+    public static final class TaskBuilder {
         private final Plugin plugin;
         private final boolean async;
         private long delay = 0;
@@ -146,68 +88,160 @@ public final class Tasks {
         }
 
         /**
-         * Run a simple task.
+         * Legacy API for Bukkit compatibility.
+         * Prefer {@link #runTracked(Runnable)} in new code.
          */
         public BukkitTask run(Runnable runnable) {
-            boolean repeating = period > 0;
-            Runnable wrapped = wrapRunnable(runnable, repeating);
-            BukkitTask task;
-            if (async) {
-                if (repeating) {
-                    task = plugin.getServer().getScheduler()
-                            .runTaskTimerAsynchronously(plugin, wrapped, delay, period);
-                } else if (delay > 0) {
-                    task = plugin.getServer().getScheduler()
-                            .runTaskLaterAsynchronously(plugin, wrapped, delay);
-                } else {
-                    task = plugin.getServer().getScheduler()
-                            .runTaskAsynchronously(plugin, wrapped);
-                }
-            } else {
-                if (repeating) {
-                    task = plugin.getServer().getScheduler()
-                            .runTaskTimer(plugin, wrapped, delay, period);
-                } else if (delay > 0) {
-                    task = plugin.getServer().getScheduler()
-                            .runTaskLater(plugin, wrapped, delay);
-                } else {
-                    task = plugin.getServer().getScheduler()
-                            .runTask(plugin, wrapped);
-                }
-            }
-            trackTask(task);
-            return wrapTrackedTask(task);
+            return asBukkitTask(runTracked(runnable));
         }
 
         /**
-         * Run with access to the BukkitTask (for self-cancellation).
-         * Usage: Tasks.timer(20).run(task -> { if (done) task.cancel(); });
-         *
-         * Note: Bukkit's Consumer<BukkitTask> overloads return void,
-         * so this method does too.
+         * Schedule a task and return framework-owned handle for lifecycle-safe diagnostics.
+         */
+        public FrameworkTask runTracked(Runnable runnable) {
+            Objects.requireNonNull(runnable, "runnable");
+            boolean repeating = period > 0;
+            Runnable guarded = wrapRunnable(runnable, repeating);
+            BukkitTask scheduled = schedule(guarded);
+            FrameworkTask tracked = register(scheduled);
+            if (!repeating) {
+                cleanupTrackedTasks();
+            }
+            return tracked;
+        }
+
+        /**
+         * Legacy API for Bukkit compatibility.
+         * Prefer {@link #runTracked(Consumer)} in new code.
          */
         public void run(Consumer<BukkitTask> consumer) {
-            ConsumerTaskRunner runner = new ConsumerTaskRunner(consumer, period > 0);
-            BukkitTask scheduled;
+            runTracked(consumer);
+        }
+
+        /**
+         * Schedule task with access to cancellable Bukkit handle.
+         */
+        public FrameworkTask runTracked(Consumer<BukkitTask> consumer) {
+            Objects.requireNonNull(consumer, "consumer");
+            boolean repeating = period > 0;
+            ConsumerTaskRunner runner = new ConsumerTaskRunner(consumer, repeating);
+            BukkitTask scheduled = schedule(runner);
+            runner.bind(scheduled);
+            FrameworkTask tracked = register(scheduled);
+            if (!repeating) {
+                cleanupTrackedTasks();
+            }
+            return tracked;
+        }
+
+        private BukkitTask schedule(Runnable runnable) {
             if (async) {
                 if (period > 0) {
-                    scheduled = runner.runTaskTimerAsynchronously(plugin, delay, period);
-                } else if (delay > 0) {
-                    scheduled = runner.runTaskLaterAsynchronously(plugin, delay);
-                } else {
-                    scheduled = runner.runTaskAsynchronously(plugin);
+                    return plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, runnable, delay, period);
                 }
-            } else {
-                if (period > 0) {
-                    scheduled = runner.runTaskTimer(plugin, delay, period);
-                } else if (delay > 0) {
-                    scheduled = runner.runTaskLater(plugin, delay);
-                } else {
-                    scheduled = runner.runTask(plugin);
+                if (delay > 0) {
+                    return plugin.getServer().getScheduler().runTaskLaterAsynchronously(plugin, runnable, delay);
                 }
+                return plugin.getServer().getScheduler().runTaskAsynchronously(plugin, runnable);
             }
-            runner.bind(scheduled);
-            trackTask(scheduled);
+            if (period > 0) {
+                return plugin.getServer().getScheduler().runTaskTimer(plugin, runnable, delay, period);
+            }
+            if (delay > 0) {
+                return plugin.getServer().getScheduler().runTaskLater(plugin, runnable, delay);
+            }
+            return plugin.getServer().getScheduler().runTask(plugin, runnable);
+        }
+
+        private BukkitTask schedule(BukkitRunnable runnable) {
+            if (async) {
+                if (period > 0) {
+                    return runnable.runTaskTimerAsynchronously(plugin, delay, period);
+                }
+                if (delay > 0) {
+                    return runnable.runTaskLaterAsynchronously(plugin, delay);
+                }
+                return runnable.runTaskAsynchronously(plugin);
+            }
+            if (period > 0) {
+                return runnable.runTaskTimer(plugin, delay, period);
+            }
+            if (delay > 0) {
+                return runnable.runTaskLater(plugin, delay);
+            }
+            return runnable.runTask(plugin);
+        }
+
+        private Runnable wrapRunnable(Runnable runnable, boolean repeating) {
+            return () -> {
+                try {
+                    runnable.run();
+                } catch (Throwable error) {
+                    FrameworkExceptionHandler.handle(plugin, FrameworkExceptionHandler.Source.TASK, error,
+                            Map.of("source", "task", "mode", repeating ? "repeating" : "oneshot"));
+                } finally {
+                    if (!repeating) {
+                        cleanupTrackedTasks();
+                    }
+                }
+            };
+        }
+    }
+
+    private static BukkitTask asBukkitTask(FrameworkTask frameworkTask) {
+        FrameworkTaskImpl wrapped = (FrameworkTaskImpl) frameworkTask;
+        return new BukkitTask() {
+            @Override
+            public int getTaskId() {
+                return wrapped.getTaskId();
+            }
+
+            @Override
+            public Plugin getOwner() {
+                return wrapped.delegate.getOwner();
+            }
+
+            @Override
+            public boolean isSync() {
+                return wrapped.delegate.isSync();
+            }
+
+            @Override
+            public void cancel() {
+                wrapped.cancel();
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return wrapped.isCancelled();
+            }
+        };
+    }
+
+    private static final class FrameworkTaskImpl implements FrameworkTask {
+        private final BukkitTask delegate;
+
+        private FrameworkTaskImpl(BukkitTask delegate) {
+            this.delegate = Objects.requireNonNull(delegate, "delegate");
+        }
+
+        @Override
+        public int getTaskId() {
+            return delegate.getTaskId();
+        }
+
+        @Override
+        public void cancel() {
+            try {
+                delegate.cancel();
+            } finally {
+                unregister(delegate.getTaskId());
+            }
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return delegate.isCancelled();
         }
     }
 
@@ -217,7 +251,7 @@ public final class Tasks {
         private volatile BukkitTask delegate;
 
         private ConsumerTaskRunner(Consumer<BukkitTask> consumer, boolean repeating) {
-            this.consumer = Objects.requireNonNull(consumer, "consumer");
+            this.consumer = consumer;
             this.repeating = repeating;
         }
 
@@ -227,16 +261,14 @@ public final class Tasks {
 
         @Override
         public void run() {
-            BukkitTask current = delegate;
-            if (current == null) {
-                current = plugin.getServer().getScheduler().getCurrentTask();
-            }
-            BukkitTask tracked = wrapTrackedTask(current);
             try {
-                consumer.accept(tracked);
+                consumer.accept(delegate);
+            } catch (Throwable error) {
+                FrameworkExceptionHandler.handle(plugin, FrameworkExceptionHandler.Source.TASK, error,
+                        Map.of("source", "task", "mode", repeating ? "repeating" : "oneshot"));
             } finally {
-                if (!repeating && current != null) {
-                    untrackTask(current);
+                if (!repeating) {
+                    cleanupTrackedTasks();
                 }
             }
         }
@@ -246,9 +278,8 @@ public final class Tasks {
             try {
                 super.cancel();
             } finally {
-                BukkitTask current = delegate;
-                if (current != null) {
-                    untrackTask(current);
+                if (delegate != null) {
+                    unregister(delegate.getTaskId());
                 }
             }
         }
