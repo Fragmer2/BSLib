@@ -45,7 +45,7 @@ public class Reactive<T> {
     private final List<BiConsumer<T, T>> changeListeners = new CopyOnWriteArrayList<>();
     private final List<Consumer<T>> setListeners = new CopyOnWriteArrayList<>();
     private final List<Reactive<?>> dependents = new CopyOnWriteArrayList<>();
-    private long version = 0; // increments on each set, used by GUI polling
+    private volatile long version = 0; // increments on each set, used by GUI polling
 
     private Reactive(T initial) {
         this.value = initial;
@@ -80,23 +80,34 @@ public class Reactive<T> {
     }
 
     public void set(T newValue) {
-        T old = this.value;
-        this.value = newValue;
-        this.version++;
+        T old;
+        List<BiConsumer<T, T>> changeSnapshot;
+        List<Consumer<T>> setSnapshot;
+        List<Reactive<?>> dependentSnapshot;
 
-        if (!Objects.equals(old, newValue)) {
-            // Notify change listeners
-            for (BiConsumer<T, T> listener : changeListeners) {
-                try { listener.accept(old, newValue); } catch (Exception e) { e.printStackTrace(); }
+        synchronized (this) {
+            old = this.value;
+            this.value = newValue;
+            this.version++;
+
+            if (Objects.equals(old, newValue)) {
+                return;
             }
-            // Notify set listeners
-            for (Consumer<T> listener : setListeners) {
-                try { listener.accept(newValue); } catch (Exception e) { e.printStackTrace(); }
-            }
-            // Propagate to dependents (mapped/combined reactives)
-            for (Reactive<?> dep : dependents) {
-                dep.recompute();
-            }
+
+            changeSnapshot = List.copyOf(changeListeners);
+            setSnapshot = List.copyOf(setListeners);
+            dependentSnapshot = List.copyOf(dependents);
+        }
+
+        // Notify outside synchronized block
+        for (BiConsumer<T, T> listener : changeSnapshot) {
+            try { listener.accept(old, newValue); } catch (Exception e) { e.printStackTrace(); }
+        }
+        for (Consumer<T> listener : setSnapshot) {
+            try { listener.accept(newValue); } catch (Exception e) { e.printStackTrace(); }
+        }
+        for (Reactive<?> dep : dependentSnapshot) {
+            dep.recompute();
         }
     }
 
@@ -105,15 +116,21 @@ public class Reactive<T> {
      *   coins.update(v -> v + 50);
      */
     public void update(Function<T, T> updater) {
-        set(updater.apply(value));
+        T current;
+        synchronized (this) {
+            current = value;
+        }
+        set(updater.apply(current));
     }
 
     /**
      * Set without triggering listeners (silent update).
      */
     public void setSilent(T newValue) {
-        this.value = newValue;
-        this.version++;
+        synchronized (this) {
+            this.value = newValue;
+            this.version++;
+        }
     }
 
     /** Version counter — increments on every set(). Used by GUI for change detection. */

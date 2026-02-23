@@ -66,12 +66,9 @@ public class BSLibPlugin extends JavaPlugin {
         PaperPlaceholderRegistry placeholderRegistry = new PaperPlaceholderRegistry();
         Placeholders.setRegistry(placeholderRegistry);
 
-        // 6. Command Framework
-        BSLib.setCommandRegistryFactory(new PaperCommandRegistryFactory());
-
-        // 7. API Module Manager (for FrameworkPlugin modules)
-        moduleManager = new ModuleManager(this, container);
-        BSLib.setModuleManager(moduleManager);
+        // 6-7. Command Framework + API Module Manager (for FrameworkPlugin modules)
+        BSLib.initialize(this, container, new PaperCommandRegistryFactory());
+        moduleManager = BSLib.getModuleManager();
 
         // 8. Sessions
         Sessions.init(this);
