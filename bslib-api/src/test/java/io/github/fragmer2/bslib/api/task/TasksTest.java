@@ -120,10 +120,7 @@ class TasksTest {
                             TaskState state = states.get(id);
                             yield state != null && state.queued;
                         }
-                        case "isCurrentlyRunning" -> {
-                            Integer id = (Integer) args[0];
-                            yield id.equals(currentTaskId.get());
-                        }
+                        case "isCurrentlyRunning" -> false
                         default -> throw new UnsupportedOperationException("Unsupported scheduler method: " + name);
                     };
                 }
