@@ -12,6 +12,7 @@ import org.bukkit.plugin.Plugin;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.*;
 import java.util.*;
+import io.github.fragmer2.bslib.internal.error.FrameworkExceptionHandler;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -344,14 +345,22 @@ public class PaperCommandRegistry implements CommandRegistry {
             if (cause instanceof IllegalArgumentException) {
                 sender.sendMessage("§c" + cause.getMessage());
             } else {
-                plugin.getLogger().severe("Error executing /" + node.getFullKey());
-                cause.printStackTrace();
+                FrameworkExceptionHandler.handle(
+                        plugin,
+                        FrameworkExceptionHandler.Source.COMMAND,
+                        cause,
+                        Map.of("command", node.getFullKey(), "sender", sender.getName())
+                );
                 sender.sendMessage("§cAn error occurred while executing this command.");
             }
             return true;
         } catch (Exception e) {
-            plugin.getLogger().severe("Error executing /" + node.getFullKey());
-            e.printStackTrace();
+            FrameworkExceptionHandler.handle(
+                    plugin,
+                    FrameworkExceptionHandler.Source.COMMAND,
+                    e,
+                    Map.of("command", node.getFullKey(), "sender", sender.getName())
+            );
             sender.sendMessage("§cAn error occurred while executing this command.");
             return true;
         }
