@@ -4,6 +4,7 @@ import io.github.fragmer2.bslib.api.command.Command;
 import io.github.fragmer2.bslib.api.di.Service;
 import org.bukkit.event.Listener;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.event.EventHandler;
 
 import java.io.File;
 import java.io.IOException;
@@ -79,8 +80,11 @@ public final class PluginScanner {
                     result.commandClasses.add(clazz);
                 }
 
-                // Listener implementation
-                if (Listener.class.isAssignableFrom(clazz) && !result.commandClasses.contains(clazz)) {
+                // Listener implementation — either implements Listener or has @EventListener annotation
+                boolean isListener = Listener.class.isAssignableFrom(clazz)
+                        || clazz.isAnnotationPresent(EventListener.class)
+                        || hasEventHandlerMethods(clazz);
+                if (isListener && !result.commandClasses.contains(clazz)) {
                     result.listenerClasses.add(clazz);
                 }
 
@@ -111,6 +115,19 @@ public final class PluginScanner {
             return Arrays.stream(clazz.getDeclaredMethods())
                     .anyMatch(m -> m.isAnnotationPresent(Command.class) ||
                             m.isAnnotationPresent(io.github.fragmer2.bslib.api.command.Subcommand.class));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Check if a class has any @EventHandler methods.
+     * Allows classes without 'implements Listener' to be auto-detected.
+     */
+    private static boolean hasEventHandlerMethods(Class<?> clazz) {
+        try {
+            return Arrays.stream(clazz.getDeclaredMethods())
+                    .anyMatch(m -> m.isAnnotationPresent(EventHandler.class));
         } catch (Exception e) {
             return false;
         }

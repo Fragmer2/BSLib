@@ -41,6 +41,9 @@ public final class States {
     @SuppressWarnings("rawtypes")
     private static final Map<Class<?>, StateManager> managers = new ConcurrentHashMap<>();
 
+    /** Tracks which plugin registered each state type (for plugin-scoped shutdown). */
+    private static final Map<Class<?>, Plugin> pluginOwners = new ConcurrentHashMap<>();
+
     private States() {}
 
     // ========== Registration ==========
@@ -55,6 +58,53 @@ public final class States {
             throw new IllegalArgumentException(type.getName() + " is not annotated with @State");
         }
         managers.put(type, new StateManager<>(plugin, type));
+        pluginOwners.put(type, plugin);
+    }
+
+    /**
+     * Auto-register a @State class if not already registered.
+     * Convenience method — safe to call multiple times.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static <T> void autoRegister(Plugin plugin, Class<T> type) {
+        if (!managers.containsKey(type)) {
+            register(plugin, type);
+        }
+    }
+
+    // ========== Global (non-player) state shortcuts ==========
+
+    /**
+     * Get or create a global (non-player) state instance.
+     * Matches documentation: States.get(plugin, MyData.class).
+     * Auto-registers the type if not yet registered.
+     *
+     * Usage:
+     *   BossData data = States.get(plugin, BossData.class);
+     *   data.bossHealth.set(1000);
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> T get(Plugin plugin, Class<T> type) {
+        autoRegister(plugin, type);
+        String key = "__global__:" + type.getSimpleName();
+        return (T) manager(type).getOrCreate(key);
+    }
+
+    /**
+     * Save a global state instance.
+     */
+    public static <T> void saveGlobal(Plugin plugin, Class<T> type) {
+        autoRegister(plugin, type);
+        manager(type).save("__global__:" + type.getSimpleName());
+    }
+
+    /**
+     * Load a global state instance from disk (async) → callback on main thread.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> void loadGlobal(Plugin plugin, Class<T> type, Consumer<T> callback) {
+        autoRegister(plugin, type);
+        manager(type).load("__global__:" + type.getSimpleName(), (Consumer) callback);
     }
 
     // ========== Player shortcuts ==========
@@ -66,6 +116,14 @@ public final class States {
     @SuppressWarnings("unchecked")
     public static <T> T of(Player player, Class<T> type) {
         return (T) manager(type).getOrCreate(player.getUniqueId().toString());
+    }
+
+    /**
+     * Alias for of(player, type) — matches documentation naming getOrCreate().
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> T getOrCreate(Player player, Class<T> type) {
+        return of(player, type);
     }
 
     /**
@@ -167,15 +225,19 @@ public final class States {
 
     /**
      * Shutdown managers for a specific plugin only.
+     * Only shuts down state types registered by this plugin.
      */
     @SuppressWarnings("rawtypes")
     public static void shutdown(Plugin plugin) {
-        // Save all, then remove
         Iterator<Map.Entry<Class<?>, StateManager>> it = managers.entrySet().iterator();
         while (it.hasNext()) {
-            StateManager manager = it.next().getValue();
-            manager.shutdown();
-            // Note: in production, filter by plugin reference
+            Map.Entry<Class<?>, StateManager> entry = it.next();
+            Plugin owner = pluginOwners.get(entry.getKey());
+            if (owner == plugin) {
+                entry.getValue().shutdown();
+                pluginOwners.remove(entry.getKey());
+                it.remove();
+            }
         }
     }
 

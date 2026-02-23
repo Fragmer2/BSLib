@@ -6,7 +6,7 @@ import io.github.fragmer2.bslib.api.di.Inject;
 import io.github.fragmer2.bslib.api.di.Service;
 import io.github.fragmer2.bslib.api.di.ServiceContainer;
 import io.github.fragmer2.bslib.api.lifecycle.*;
-import io.github.fragmer2.bslib.api.module.Module;
+import io.github.fragmer2.bslib.api.module.BSModule;
 import io.github.fragmer2.bslib.api.reactive.ReactiveBinding;
 import org.bukkit.Bukkit;
 import org.bukkit.event.HandlerList;
@@ -146,8 +146,24 @@ public abstract class FrameworkPlugin extends JavaPlugin {
         }
     }
 
-    /** Register a module. Auto-enables. */
-    protected void registerModule(Module module) {
+    /**
+     * Register any object as an event listener.
+     * Works even if the class doesn't implement Listener —
+     * BSLib will wrap it automatically.
+     */
+    protected void registerListener(Object handler) {
+        BSLib.getContainer().inject(handler);
+        Listener listener = wrapAsListener(handler);
+        Bukkit.getPluginManager().registerEvents(listener, this);
+        registeredListeners.add(listener);
+        managedObjects.add(handler);
+    }
+
+    /**
+     * Register a module. Auto-enables.
+     * To add modules globally, use {@link io.github.fragmer2.bslib.api.module.ModuleRegistry}.
+     */
+    protected void registerModule(BSModule module) {
         BSLib.getModuleManager().register(module);
         BSLib.getModuleManager().enable(module.getId());
     }
@@ -294,7 +310,7 @@ public abstract class FrameworkPlugin extends JavaPlugin {
             getLogger().info("[AutoScan] Command: " + cmdClass.getSimpleName());
         }
 
-        // 3. Register Listener classes
+        // 3. Register Listener classes (supports both 'implements Listener' and @EventListener)
         for (Class<?> listenerClass : result.listenerClasses) {
             Object instance = PluginScanner.instantiate(listenerClass);
             if (instance == null) {
@@ -302,7 +318,8 @@ public abstract class FrameworkPlugin extends JavaPlugin {
                 continue;
             }
             container.inject(instance);
-            Listener listener = (Listener) instance;
+            // If class doesn't implement Listener, wrap it in a dynamic proxy
+            Listener listener = wrapAsListener(instance);
             Bukkit.getPluginManager().registerEvents(listener, this);
             registeredListeners.add(listener);
             managedObjects.add(instance);
@@ -314,6 +331,63 @@ public abstract class FrameworkPlugin extends JavaPlugin {
             io.github.fragmer2.bslib.api.state.States.register(this, stateClass);
             getLogger().info("[AutoScan] State: " + stateClass.getSimpleName());
         }
+    }
+
+    // ========== Internal helpers ==========
+
+    /**
+     * Wraps an arbitrary object as a Bukkit Listener.
+     * If the object already implements Listener, returns it directly.
+     * Otherwise, registers all @EventHandler methods manually via Bukkit's low-level API.
+     * Returns a DelegatingListener placeholder so it can be tracked and unregistered later.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Listener wrapAsListener(Object handler) {
+        if (handler instanceof Listener l) return l;
+        // For classes that don't implement Listener but have @EventHandler methods,
+        // we register each @EventHandler method individually using Bukkit's registerEvent.
+        DelegatingListener wrapper = new DelegatingListener(handler);
+        for (java.lang.reflect.Method method : handler.getClass().getDeclaredMethods()) {
+            org.bukkit.event.EventHandler annotation = method.getAnnotation(org.bukkit.event.EventHandler.class);
+            if (annotation == null) continue;
+            if (method.getParameterCount() != 1) continue;
+            Class<?> paramType = method.getParameterTypes()[0];
+            if (!org.bukkit.event.Event.class.isAssignableFrom(paramType)) continue;
+            Class<? extends org.bukkit.event.Event> eventType =
+                    (Class<? extends org.bukkit.event.Event>) paramType;
+            method.setAccessible(true);
+            Bukkit.getPluginManager().registerEvent(
+                    eventType,
+                    wrapper,
+                    annotation.priority(),
+                    (listener, event) -> {
+                        if (!eventType.isInstance(event)) return;
+                        if (annotation.ignoreCancelled()
+                                && event instanceof org.bukkit.event.Cancellable c
+                                && c.isCancelled()) return;
+                        try {
+                            method.invoke(handler, event);
+                        } catch (Exception e) {
+                            getLogger().severe("Error in @EventHandler " +
+                                    handler.getClass().getSimpleName() + "." + method.getName());
+                            e.printStackTrace();
+                        }
+                    },
+                    this,
+                    annotation.ignoreCancelled()
+            );
+        }
+        return wrapper;
+    }
+
+    /**
+     * A thin Listener placeholder for objects that don't implement Listener.
+     * Used only for tracking (so we can unregister via HandlerList.unregisterAll).
+     */
+    private static final class DelegatingListener implements Listener {
+        private final Object delegate;
+        DelegatingListener(Object delegate) { this.delegate = delegate; }
+        public Object getDelegate() { return delegate; }
     }
 
     // ========== Cleanup ==========

@@ -7,19 +7,14 @@ import java.util.*;
 import java.util.logging.Logger;
 
 /**
- * Manages BSLib modules lifecycle.
- *
- * Usage:
- *   ModuleManager mm = BSLib.getModuleManager();
- *   mm.register(new GuiModule());
- *   mm.register(new ScoreboardModule());
- *   mm.enableAll();
+ * Manages the lifecycle of all BSLib modules.
+ * Modules are registered via {@link ModuleRegistry} and enabled/disabled automatically.
  */
 public class ModuleManager {
     private final Plugin plugin;
     private final ServiceContainer container;
     private final Logger logger;
-    private final Map<String, Module> modules = new LinkedHashMap<>();
+    private final Map<String, BSModule> modules = new LinkedHashMap<>();
     private final Set<String> enabled = new HashSet<>();
 
     public ModuleManager(Plugin plugin, ServiceContainer container) {
@@ -29,14 +24,24 @@ public class ModuleManager {
     }
 
     /**
-     * Register a module.
+     * Register a module instance.
      */
-    public void register(Module module) {
+    public void register(BSModule module) {
         if (modules.containsKey(module.getId())) {
-            logger.warning("Module already registered: " + module.getId());
+            logger.warning("[BSLib] Module already registered: " + module.getId());
             return;
         }
         modules.put(module.getId(), module);
+    }
+
+    /**
+     * Register all modules from the central {@link ModuleRegistry}.
+     * Call this once on startup.
+     */
+    public void registerFromRegistry() {
+        for (var supplier : ModuleRegistry.getModuleSuppliers()) {
+            register(supplier.get());
+        }
     }
 
     /**
@@ -45,29 +50,30 @@ public class ModuleManager {
     public boolean enable(String moduleId) {
         if (enabled.contains(moduleId)) return true;
 
-        Module module = modules.get(moduleId);
+        BSModule module = modules.get(moduleId);
         if (module == null) {
-            logger.warning("Module not found: " + moduleId);
+            logger.warning("[BSLib] Module not found: " + moduleId);
             return false;
         }
 
-        // Resolve dependencies
+        // Resolve dependencies first
         for (String dep : module.getDependencies()) {
             if (!enabled.contains(dep)) {
                 if (!enable(dep)) {
-                    logger.severe("Cannot enable " + moduleId + ": missing dependency " + dep);
+                    logger.severe("[BSLib] Cannot enable " + moduleId + ": missing dependency '" + dep + "'");
                     return false;
                 }
             }
         }
 
         try {
-            module.onEnable(plugin, container);
+            ModuleContext ctx = new ModuleContext(plugin, container);
+            module.onEnable(ctx);
             enabled.add(moduleId);
-            logger.info("Module enabled: " + module.getName() + " v" + module.getVersion());
+            logger.info("[BSLib] Module enabled: " + module.getName() + " v" + module.getVersion());
             return true;
         } catch (Exception e) {
-            logger.severe("Failed to enable module: " + moduleId);
+            logger.severe("[BSLib] Failed to enable module: " + moduleId);
             e.printStackTrace();
             return false;
         }
@@ -77,7 +83,6 @@ public class ModuleManager {
      * Enable all registered modules in dependency order.
      */
     public void enableAll() {
-        // Topological sort by dependencies
         List<String> sorted = topologicalSort();
         for (String id : sorted) {
             enable(id);
@@ -88,21 +93,21 @@ public class ModuleManager {
      * Disable a specific module.
      */
     public void disable(String moduleId) {
-        Module module = modules.get(moduleId);
+        BSModule module = modules.get(moduleId);
         if (module != null && enabled.contains(moduleId)) {
             try {
                 module.onDisable();
             } catch (Exception e) {
-                logger.warning("Error disabling module: " + moduleId);
+                logger.warning("[BSLib] Error disabling module: " + moduleId);
                 e.printStackTrace();
             }
             enabled.remove(moduleId);
-            logger.info("Module disabled: " + module.getName());
+            logger.info("[BSLib] Module disabled: " + module.getName());
         }
     }
 
     /**
-     * Disable all modules (reverse order).
+     * Disable all modules in reverse order.
      */
     public void disableAll() {
         List<String> sorted = new ArrayList<>(enabled);
@@ -116,15 +121,15 @@ public class ModuleManager {
         return enabled.contains(moduleId);
     }
 
-    public Module getModule(String moduleId) {
+    public BSModule getModule(String moduleId) {
         return modules.get(moduleId);
     }
 
-    public Collection<Module> getModules() {
+    public Collection<BSModule> getModules() {
         return Collections.unmodifiableCollection(modules.values());
     }
 
-    // Simple topological sort
+    // Simple topological sort for dependency resolution
     private List<String> topologicalSort() {
         List<String> result = new ArrayList<>();
         Set<String> visited = new HashSet<>();
@@ -141,11 +146,11 @@ public class ModuleManager {
     private void visit(String id, Set<String> visited, Set<String> visiting, List<String> result) {
         if (visited.contains(id)) return;
         if (visiting.contains(id)) {
-            logger.warning("Circular dependency detected involving: " + id);
+            logger.warning("[BSLib] Circular dependency detected involving: " + id);
             return;
         }
         visiting.add(id);
-        Module module = modules.get(id);
+        BSModule module = modules.get(id);
         if (module != null) {
             for (String dep : module.getDependencies()) {
                 visit(dep, visited, visiting, result);

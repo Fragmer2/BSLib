@@ -1,5 +1,6 @@
 package io.github.fragmer2.bslib.api.session;
 
+import io.github.fragmer2.bslib.api.state.States;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -10,6 +11,7 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -34,6 +36,12 @@ public final class Sessions implements Listener {
     private static final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
     private static final List<Consumer<SessionContext>> joinHandlers = new CopyOnWriteArrayList<>();
     private static final List<BiConsumer<Player, Session>> quitHandlers = new CopyOnWriteArrayList<>();
+
+    /**
+     * State types that are automatically loaded on player join and unloaded on quit.
+     * Register via Sessions.autoLoad(plugin, MyData.class).
+     */
+    private static final List<AutoStateEntry<?>> autoStates = new CopyOnWriteArrayList<>();
 
     private Sessions() {}
 
@@ -66,6 +74,22 @@ public final class Sessions implements Listener {
         return sessions.containsKey(player.getUniqueId());
     }
 
+    // ========== Auto-State (load/unload @State on join/quit) ==========
+
+    /**
+     * Register a @State class for automatic loading on player join and unloading on quit.
+     * Data is loaded async from disk and available in the join callback.
+     *
+     * Usage:
+     *   Sessions.autoLoad(plugin, PlayerData.class);
+     *   // Now PlayerData is always ready when a player joins:
+     *   PlayerData data = States.of(player, PlayerData.class);
+     */
+    public static <T> void autoLoad(Plugin plugin, Class<T> stateClass) {
+        States.autoRegister(plugin, stateClass);
+        autoStates.add(new AutoStateEntry<>(plugin, stateClass));
+    }
+
     // ========== Lifecycle hooks ==========
 
     /**
@@ -96,6 +120,13 @@ public final class Sessions implements Listener {
         Session session = new Session();
         sessions.put(player.getUniqueId(), session);
         SessionContext ctx = new SessionContext(player, session);
+
+        // Auto-load all registered @State types for this player
+        for (AutoStateEntry<?> entry : autoStates) {
+            loadStateForPlayer(player, entry);
+        }
+
+        // Run join handlers
         for (Consumer<SessionContext> handler : joinHandlers) {
             try {
                 handler.accept(ctx);
@@ -103,6 +134,13 @@ public final class Sessions implements Listener {
                 e.printStackTrace();
             }
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> void loadStateForPlayer(Player player, AutoStateEntry<T> entry) {
+        States.load(player, entry.stateClass, data -> {
+            // State is loaded and cached — nothing else needed
+        });
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -131,9 +169,14 @@ public final class Sessions implements Listener {
         sessions.clear();
         joinHandlers.clear();
         quitHandlers.clear();
+        autoStates.clear();
     }
 
     // ========== Context ==========
 
     public record SessionContext(Player player, Session session) {}
+
+    // ========== Internal ==========
+
+    private record AutoStateEntry<T>(Plugin plugin, Class<T> stateClass) {}
 }
