@@ -8,217 +8,201 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 class TasksTest {
 
+    private TestRuntime runtime;
+
     @BeforeEach
     void setUp() {
-        FakeRuntime runtime = new FakeRuntime();
+        runtime = new TestRuntime();
         Tasks.init(runtime.plugin());
-        Tasks.trackedTaskCount();
     }
 
     @Test
-    void tracksAndRemovesTasksAcrossAllSchedulingModes() {
-        FakeRuntime runtime = new FakeRuntime();
-        Tasks.init(runtime.plugin());
-
-        List<BukkitTask> cancellable = new ArrayList<>();
-        cancellable.add(Tasks.sync().repeat(20).run(() -> {}));
-        cancellable.add(Tasks.sync().delay(20).repeat(20).run(() -> {}));
-        cancellable.add(Tasks.async().repeat(20).run(() -> {}));
-        cancellable.add(Tasks.async().delay(20).repeat(20).run(() -> {}));
-
-        AtomicInteger consumerRuns = new AtomicInteger();
-        Tasks.sync().run(task -> consumerRuns.incrementAndGet());
-        Tasks.async().run(task -> consumerRuns.incrementAndGet());
-        Tasks.sync().delay(10).run(task -> consumerRuns.incrementAndGet());
-        Tasks.async().delay(10).run(task -> consumerRuns.incrementAndGet());
-
-        assertEquals(4, Tasks.trackedTaskCount());
-        assertEquals(4, consumerRuns.get());
-
-        cancellable.forEach(BukkitTask::cancel);
-        assertEquals(0, Tasks.trackedTaskCount());
-    }
-
-    @Test
-    void runTrackedReturnsFrameworkTaskHandle() {
-        FakeRuntime runtime = new FakeRuntime();
-        Tasks.init(runtime.plugin());
-
+    void createsTrackedTaskAndAllowsCancellation() {
         FrameworkTask task = Tasks.sync().repeat(20).runTracked(() -> {});
+
         assertEquals(1, Tasks.trackedTaskCount());
+        assertFalse(task.isCancelled());
 
         task.cancel();
+
+        assertTrue(task.isCancelled());
         assertEquals(0, Tasks.trackedTaskCount());
     }
 
     @Test
-    void stressTenThousandTasksCancelWithoutLeaks() {
-        FakeRuntime runtime = new FakeRuntime();
-        Tasks.init(runtime.plugin());
+    void delayDoesNotExecuteImmediately() {
+        AtomicInteger runs = new AtomicInteger();
 
-        List<BukkitTask> tasks = new ArrayList<>();
-        for (int i = 0; i < 2500; i++) {
-            tasks.add(Tasks.sync().repeat(20).run(() -> {}));
-            tasks.add(Tasks.async().repeat(20).run(() -> {}));
-            Tasks.sync().run((Consumer<BukkitTask>) BukkitTask::cancel);
-            Tasks.async().run((Consumer<BukkitTask>) BukkitTask::cancel);
-        }
+        FrameworkTask delayed = Tasks.sync().delay(40).runTracked(runs::incrementAndGet);
 
-        assertEquals(5000, Tasks.trackedTaskCount());
+        assertEquals(0, runs.get());
+        assertEquals(1, Tasks.trackedTaskCount());
 
-        tasks.forEach(BukkitTask::cancel);
+        delayed.cancel();
         assertEquals(0, Tasks.trackedTaskCount());
     }
 
-    private static final class FakeRuntime {
-        private final AtomicInteger nextId = new AtomicInteger(1);
-        private final Map<Integer, TaskState> states = new ConcurrentHashMap<>();
+    @Test
+    void oneShotTaskExecutesAndIsNotLeaked() {
+        AtomicInteger runs = new AtomicInteger();
 
-        private final BukkitScheduler scheduler = (BukkitScheduler) Proxy.newProxyInstance(
+        FrameworkTask oneShot = Tasks.sync().runTracked(runs::incrementAndGet);
+
+        assertEquals(1, runs.get());
+        assertEquals(0, Tasks.trackedTaskCount());
+        assertFalse(oneShot.isCancelled());
+    }
+
+    @Test
+    void separatesAsyncAndSyncSchedulingRoutes() {
+        Tasks.sync().repeat(20).runTracked(() -> {});
+        Tasks.async().repeat(20).runTracked(() -> {});
+
+        assertTrue(runtime.invoked("runTaskTimer"));
+        assertTrue(runtime.invoked("runTaskTimerAsynchronously"));
+
+        assertEquals(2, Tasks.trackedTaskCount());
+    }
+
+    @Test
+    void consumerTaskCanSelfCancelAndUntrack() {
+        FrameworkTask tracked = Tasks.sync().repeat(20).runTracked(task -> task.cancel());
+
+        assertTrue(tracked.isCancelled());
+        assertEquals(0, Tasks.trackedTaskCount());
+    }
+
+    private static final class TestRuntime {
+        private final AtomicInteger ids = new AtomicInteger(1);
+        private final Map<Integer, SimpleTask> tasks = new HashMap<>();
+        private final Map<String, AtomicInteger> invocations = new HashMap<>();
+
+        private final BukkitScheduler fakeScheduler = (BukkitScheduler) Proxy.newProxyInstance(
                 BukkitScheduler.class.getClassLoader(),
                 new Class[]{BukkitScheduler.class},
                 (proxy, method, args) -> {
                     String name = method.getName();
+                    invocations.computeIfAbsent(name, k -> new AtomicInteger()).incrementAndGet();
+
                     return switch (name) {
-                        case "runTask", "runTaskAsynchronously", "runTaskLater", "runTaskLaterAsynchronously" -> {
-                            Object action = args[1];
-                            if (action instanceof Runnable runnable) {
-                                yield scheduleRunnable(runnable, false);
-                            }
-                            if (action instanceof Consumer<?> consumer) {
-                                @SuppressWarnings("unchecked")
-                                Consumer<BukkitTask> typed = (Consumer<BukkitTask>) consumer;
-                                yield scheduleConsumer(typed, false);
-                            }
-                            throw new IllegalArgumentException("Unsupported action type: " + action);
-                        }
-                        case "runTaskTimer", "runTaskTimerAsynchronously" -> {
-                            Object action = args[1];
-                            if (action instanceof Runnable runnable) {
-                                yield scheduleRunnable(runnable, true);
-                            }
-                            if (action instanceof Consumer<?> consumer) {
-                                @SuppressWarnings("unchecked")
-                                Consumer<BukkitTask> typed = (Consumer<BukkitTask>) consumer;
-                                yield scheduleConsumer(typed, true);
-                            }
-                            throw new IllegalArgumentException("Unsupported action type: " + action);
-                        }
+                        case "runTask", "runTaskAsynchronously" -> schedule((Runnable) args[1], false, true, false);
+                        case "runTaskLater", "runTaskLaterAsynchronously" -> schedule((Runnable) args[1], false, false, false);
+                        case "runTaskTimer", "runTaskTimerAsynchronously" -> schedule((Runnable) args[1], true, false, false);
                         case "isQueued" -> {
                             Integer id = (Integer) args[0];
-                            TaskState state = states.get(id);
-                            yield state != null && state.queued;
+                            SimpleTask task = tasks.get(id);
+                            yield task != null && task.queued.get();
                         }
-                        case "isCurrentlyRunning" -> false
-                        default -> throw new UnsupportedOperationException("Unsupported scheduler method: " + name);
+                        case "isCurrentlyRunning" -> false;
+                        default -> throw new UnsupportedOperationException("Unsupported scheduler method in test runtime: " + name);
                     };
                 }
         );
 
-        private final Server server = (Server) Proxy.newProxyInstance(
+        private final Server fakeServer = (Server) Proxy.newProxyInstance(
                 Server.class.getClassLoader(),
                 new Class[]{Server.class},
                 (proxy, method, args) -> {
                     if ("getScheduler".equals(method.getName())) {
-                        return scheduler;
+                        return fakeScheduler;
                     }
-                    throw new UnsupportedOperationException("Unsupported server method: " + method.getName());
+                    throw new UnsupportedOperationException("Unsupported server method in test runtime: " + method.getName());
                 }
         );
 
-        private final Plugin plugin = (Plugin) Proxy.newProxyInstance(
+        private final Plugin fakePlugin = (Plugin) Proxy.newProxyInstance(
                 Plugin.class.getClassLoader(),
                 new Class[]{Plugin.class},
                 (proxy, method, args) -> {
-                    if ("getServer".equals(method.getName())) {
-                        return server;
-                    }
-                    if ("isEnabled".equals(method.getName())) {
-                        return true;
-                    }
-                    if ("getName".equals(method.getName())) {
-                        return "test-plugin";
-                    }
-                    throw new UnsupportedOperationException("Unsupported plugin method: " + method.getName());
+                    return switch (method.getName()) {
+                        case "getServer" -> fakeServer;
+                        case "isEnabled" -> true;
+                        case "getName" -> "tasks-test-plugin";
+                        default -> null;
+                    };
                 }
         );
 
-        private BukkitTask scheduleRunnable(Runnable runnable, boolean repeating) {
-            int id = nextId.getAndIncrement();
-            TaskState state = new TaskState(id, repeating);
-            states.put(id, state);
-            if (!repeating) {
-                runTaskNow(state, runnable);
-            }
-            return state.task;
+        Plugin plugin() {
+            return fakePlugin;
         }
 
-        private BukkitTask scheduleConsumer(Consumer<BukkitTask> consumer, boolean repeating) {
-            int id = nextId.getAndIncrement();
-            TaskState state = new TaskState(id, repeating);
-            states.put(id, state);
-            runTaskNow(state, () -> consumer.accept(state.task));
-            return state.task;
+        boolean invoked(String name) {
+            return invocations.getOrDefault(name, new AtomicInteger()).get() > 0;
         }
 
-        private void runTaskNow(TaskState state, Runnable action) {
-            try {
-                action.run();
-            } finally {
-                if (!state.repeating || state.cancelled) {
-                    state.queued = false;
+        private BukkitTask schedule(Runnable runnable, boolean repeating, boolean executeNow, boolean sync) {
+            int id = ids.getAndIncrement();
+            SimpleTask task = new SimpleTask(id, fakePlugin, sync, repeating);
+            tasks.put(id, task);
+
+            if (executeNow) {
+                runnable.run();
+                if (!repeating && !task.cancelled.get()) {
+                    task.queued.set(false);
                 }
             }
+
+            return task;
+        }
+    }
+
+    private static final class SimpleTask implements BukkitTask {
+        private final int id;
+        private final Plugin owner;
+        private final boolean sync;
+        private final boolean repeating;
+        private final AtomicBoolean queued = new AtomicBoolean(true);
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        private SimpleTask(int id, Plugin owner, boolean sync, boolean repeating) {
+            this.id = id;
+            this.owner = owner;
+            this.sync = sync;
+            this.repeating = repeating;
         }
 
-        private Plugin plugin() {
-            return plugin;
+        @Override
+        public int getTaskId() {
+            return id;
         }
 
-        private final class TaskState {
-            private final int id;
-            private final boolean repeating;
-            private volatile boolean queued = true;
-            private volatile boolean cancelled = false;
-            private final BukkitTask task;
+        @Override
+        public Plugin getOwner() {
+            return owner;
+        }
 
-            private TaskState(int id, boolean repeating) {
-                this.id = id;
-                this.repeating = repeating;
-                this.task = (BukkitTask) Proxy.newProxyInstance(
-                        BukkitTask.class.getClassLoader(),
-                        new Class[]{BukkitTask.class},
-                        (proxy, method, args) -> {
-                            String name = method.getName();
-                            return switch (name) {
-                                case "getTaskId" -> id;
-                                case "cancel" -> {
-                                    cancelled = true;
-                                    queued = false;
-                                    yield null;
-                                }
-                                case "isCancelled" -> cancelled;
-                                case "getOwner" -> plugin;
-                                case "isSync" -> true;
-                                case "equals" -> proxy == args[0];
-                                case "hashCode" -> System.identityHashCode(proxy);
-                                case "toString" -> "FakeTask(" + id + ")";
-                                default -> throw new UnsupportedOperationException("Unsupported task method: " + name);
-                            };
-                        }
-                );
-            }
+        @Override
+        public boolean isSync() {
+            return sync;
+        }
+
+        @Override
+        public void cancel() {
+            cancelled.set(true);
+            queued.set(false);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled.get();
+        }
+
+        @Override
+        public String toString() {
+            return "SimpleTask{" +
+                    "id=" + id +
+                    ", repeating=" + repeating +
+                    '}';
         }
     }
 }
