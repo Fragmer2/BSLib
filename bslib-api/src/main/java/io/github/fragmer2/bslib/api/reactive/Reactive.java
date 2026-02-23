@@ -86,21 +86,6 @@ public class Reactive<T> {
                 batchedValue = null;
                 dispatch = prepareSetLocked(pending, false);
             }
-
-            changeSnapshot = List.copyOf(changeListeners);
-            setSnapshot = List.copyOf(setListeners);
-            dependentSnapshot = List.copyOf(dependents);
-        }
-
-        // Notify outside synchronized block
-        for (BiConsumer<T, T> listener : changeSnapshot) {
-            try { listener.accept(old, newValue); } catch (Exception e) { e.printStackTrace(); }
-        }
-        for (Consumer<T> listener : setSnapshot) {
-            try { listener.accept(newValue); } catch (Exception e) { e.printStackTrace(); }
-        }
-        for (Reactive<?> dep : dependentSnapshot) {
-            dep.recompute();
         }
         dispatchOutsideLock(dispatch);
         return this;
