@@ -3,6 +3,7 @@ package io.github.fragmer2.bslib.paper;
 import io.github.fragmer2.bslib.api.BSLib;
 import io.github.fragmer2.bslib.api.FrameworkPlugin;
 import io.github.fragmer2.bslib.api.GuiManagerProvider;
+import io.github.fragmer2.bslib.api.capability.PluginCapabilityRegistry;
 import io.github.fragmer2.bslib.api.cooldown.Cooldowns;
 import io.github.fragmer2.bslib.api.debug.Debug;
 import io.github.fragmer2.bslib.api.debug.GuiInspector;
@@ -11,6 +12,7 @@ import io.github.fragmer2.bslib.api.event.Bus;
 import io.github.fragmer2.bslib.api.event.Events;
 import io.github.fragmer2.bslib.api.feature.Features;
 import io.github.fragmer2.bslib.api.interaction.Interact;
+import io.github.fragmer2.bslib.api.messaging.PluginMessageBus;
 import io.github.fragmer2.bslib.api.module.ModuleManager;
 import io.github.fragmer2.bslib.api.placeholder.Placeholders;
 import io.github.fragmer2.bslib.api.reactive.ReactiveBinding;
@@ -110,6 +112,8 @@ public class BSLibPlugin extends JavaPlugin {
         GuiInspector.clearStats();
         Debug.resetTimings();
         io.github.fragmer2.bslib.api.message.Msg.clear();
+        PluginCapabilityRegistry.clear();
+        PluginMessageBus.clearAll();
 
         if (container != null) container.clear();
 
@@ -129,6 +133,8 @@ public class BSLibPlugin extends JavaPlugin {
 
         switch (args[0].toLowerCase()) {
             case "debug"   -> handleDebug(sender);
+            case "doctor"  -> handleDoctor(sender);
+            case "inspect" -> handleInspect(sender, Arrays.copyOfRange(args, 1, args.length));
             case "dev"     -> handleDev(sender);
             case "reload"  -> handleReload(sender, Arrays.copyOfRange(args, 1, args.length));
             case "plugins" -> handlePlugins(sender);
@@ -142,7 +148,7 @@ public class BSLibPlugin extends JavaPlugin {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
             List<String> cmds = new ArrayList<>();
-            if (sender.hasPermission("bslib.debug")) cmds.addAll(List.of("debug", "plugins", "modules"));
+            if (sender.hasPermission("bslib.debug")) cmds.addAll(List.of("debug", "doctor", "inspect", "plugins", "modules"));
             if (sender.hasPermission("bslib.dev"))    cmds.add("dev");
             if (sender.hasPermission("bslib.reload")) cmds.add("reload");
             return filter(cmds, args[0]);
@@ -154,6 +160,9 @@ public class BSLibPlugin extends JavaPlugin {
                 if (p instanceof FrameworkPlugin) names.add(p.getName());
             }
             return filter(names, args[1]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("inspect")) {
+            return filter(List.of("gui", "reactive", "services"), args[1]);
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("reload") && args[1].equalsIgnoreCase("hard")) {
             List<String> names = new ArrayList<>();
@@ -176,6 +185,8 @@ public class BSLibPlugin extends JavaPlugin {
         sender.sendMessage("§6§lBSLib §7v" + getDescription().getVersion());
         sender.sendMessage("");
         sender.sendMessage("§e/bslib debug §7— system report (memory, TPS, plugins)");
+        sender.sendMessage("§e/bslib doctor §7— deep framework diagnostics");
+        sender.sendMessage("§e/bslib inspect <gui|reactive|services> §7— targeted diagnostics");
         sender.sendMessage("§e/bslib dev §7— toggle GUI inspector mode");
         sender.sendMessage("§e/bslib reload <plugin> §7— live reload a plugin");
         sender.sendMessage("§e/bslib reload hard <plugin> §7— full re-register reload");
@@ -202,6 +213,38 @@ public class BSLibPlugin extends JavaPlugin {
         sender.sendMessage("  §7Dev mode players: §f" +
                 Bukkit.getOnlinePlayers().stream().filter(GuiInspector::isEnabled).count());
         sender.sendMessage("  §7Paper modules: §f" + paperModuleManager.getEnabledCount());
+    }
+
+    private void handleDoctor(CommandSender sender) {
+        if (!sender.hasPermission("bslib.debug")) {
+            sender.sendMessage("§cNo permission.");
+            return;
+        }
+        Debug.enable();
+        Debug.doctor(sender, this);
+    }
+
+    private void handleInspect(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("bslib.debug")) {
+            sender.sendMessage("§cNo permission.");
+            return;
+        }
+        if (args.length == 0) {
+            sender.sendMessage("§cUsage: /bslib inspect <gui|reactive|services>");
+            return;
+        }
+        switch (args[0].toLowerCase()) {
+            case "gui" -> sender.sendMessage("§eGUI avg render: §f" + String.format("%.3fms", GuiInspector.averageRenderMillis()));
+            case "reactive" -> {
+                sender.sendMessage("§eReactive players: §f" + ReactiveBinding.activePlayerCount());
+                sender.sendMessage("§eReactive bindings: §f" + ReactiveBinding.activeBindingCount());
+            }
+            case "services" -> {
+                sender.sendMessage("§eServices: §f" + Services.registeredCount() + " §7(lazy: " + Services.lazyCount() + ")");
+                sender.sendMessage("§7Keys: §f" + Services.serviceKeys());
+            }
+            default -> sender.sendMessage("§cUnknown inspect target: " + args[0]);
+        }
     }
 
     private void handleDev(CommandSender sender) {

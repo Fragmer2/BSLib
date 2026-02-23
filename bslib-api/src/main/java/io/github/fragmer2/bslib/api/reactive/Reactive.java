@@ -3,6 +3,7 @@ package io.github.fragmer2.bslib.api.reactive;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -46,6 +47,8 @@ public class Reactive<T> {
     private final List<Consumer<T>> setListeners = new CopyOnWriteArrayList<>();
     private final List<Reactive<?>> dependents = new CopyOnWriteArrayList<>();
     private volatile long version = 0; // increments on each set, used by GUI polling
+    private volatile boolean batching = false;
+    private T batchedValue;
 
     private Reactive(T initial) {
         this.value = initial;
@@ -80,6 +83,11 @@ public class Reactive<T> {
     }
 
     public void set(T newValue) {
+        if (batching) {
+            batchedValue = newValue;
+            return;
+        }
+
         T old;
         List<BiConsumer<T, T>> changeSnapshot;
         List<Consumer<T>> setSnapshot;
@@ -144,16 +152,26 @@ public class Reactive<T> {
      * Called when value changes (old, new).
      */
     public Reactive<T> onChange(BiConsumer<T, T> listener) {
-        changeListeners.add(listener);
+        subscribeChange(listener);
         return this;
+    }
+
+    public Subscription subscribeChange(BiConsumer<T, T> listener) {
+        changeListeners.add(listener);
+        return () -> changeListeners.remove(listener);
     }
 
     /**
      * Called when value is set (new value only).
      */
     public Reactive<T> onSet(Consumer<T> listener) {
-        setListeners.add(listener);
+        subscribeSet(listener);
         return this;
+    }
+
+    public Subscription subscribeSet(Consumer<T> listener) {
+        setListeners.add(listener);
+        return () -> setListeners.remove(listener);
     }
 
     /**
@@ -192,6 +210,52 @@ public class Reactive<T> {
     /** Internal: called when a parent changes. Override in derived types. */
     void recompute() {
         // base Reactive doesn't recompute — only MappedReactive/CombinedReactive do
+    }
+
+    public Reactive<T> beginBatch() {
+        batching = true;
+        batchedValue = value;
+        return this;
+    }
+
+    public Reactive<T> endBatch() {
+        boolean shouldFlush = batching;
+        T pending = batchedValue;
+        batching = false;
+        batchedValue = null;
+        if (shouldFlush) {
+            set(pending);
+        }
+        return this;
+    }
+
+    public Reactive<T> distinctUntilChanged() {
+        return this;
+    }
+
+    public Reactive<T> throttle(long ticks) {
+        Reactive<T> out = Reactive.of(get());
+        AtomicBoolean cooling = new AtomicBoolean(false);
+        this.subscribeSet(next -> {
+            if (cooling.compareAndSet(false, true)) {
+                out.set(next);
+                io.github.fragmer2.bslib.api.task.Tasks.sync().delay(ticks).run(() -> cooling.set(false));
+            }
+        });
+        return out;
+    }
+
+    public Reactive<T> debounce(long ticks) {
+        Reactive<T> out = Reactive.of(get());
+        final int[] taskId = {-1};
+        this.subscribeSet(next -> {
+            if (taskId[0] != -1) {
+                org.bukkit.Bukkit.getScheduler().cancelTask(taskId[0]);
+            }
+            var task = io.github.fragmer2.bslib.api.task.Tasks.sync().delay(ticks).run(() -> out.set(next));
+            taskId[0] = task.getTaskId();
+        });
+        return out;
     }
 
     // ========== Integration shortcuts ==========

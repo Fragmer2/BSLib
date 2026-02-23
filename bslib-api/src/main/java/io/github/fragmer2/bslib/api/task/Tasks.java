@@ -3,6 +3,8 @@ package io.github.fragmer2.bslib.api.task;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -16,11 +18,26 @@ import java.util.function.Consumer;
  */
 public final class Tasks {
     private static Plugin plugin;
+    private static final Set<Integer> trackedTaskIds = ConcurrentHashMap.newKeySet();
 
     private Tasks() {}
 
     public static void init(Plugin p) {
         plugin = p;
+    }
+
+    public static int trackedTaskCount() {
+        cleanupTrackedTasks();
+        return trackedTaskIds.size();
+    }
+
+    private static void trackTask(BukkitTask task) {
+        if (task != null) trackedTaskIds.add(task.getTaskId());
+    }
+
+    private static void cleanupTrackedTasks() {
+        if (plugin == null) return;
+        trackedTaskIds.removeIf(id -> !plugin.getServer().getScheduler().isQueued(id) && !plugin.getServer().getScheduler().isCurrentlyRunning(id));
     }
 
     public static TaskBuilder sync() {
@@ -81,25 +98,37 @@ public final class Tasks {
         public BukkitTask run(Runnable runnable) {
             if (async) {
                 if (period > 0) {
-                    return plugin.getServer().getScheduler()
+                    BukkitTask task = plugin.getServer().getScheduler()
                             .runTaskTimerAsynchronously(plugin, runnable, delay, period);
+                    trackTask(task);
+                    return task;
                 } else if (delay > 0) {
-                    return plugin.getServer().getScheduler()
+                    BukkitTask task = plugin.getServer().getScheduler()
                             .runTaskLaterAsynchronously(plugin, runnable, delay);
+                    trackTask(task);
+                    return task;
                 } else {
-                    return plugin.getServer().getScheduler()
+                    BukkitTask task = plugin.getServer().getScheduler()
                             .runTaskAsynchronously(plugin, runnable);
+                    trackTask(task);
+                    return task;
                 }
             } else {
                 if (period > 0) {
-                    return plugin.getServer().getScheduler()
+                    BukkitTask task = plugin.getServer().getScheduler()
                             .runTaskTimer(plugin, runnable, delay, period);
+                    trackTask(task);
+                    return task;
                 } else if (delay > 0) {
-                    return plugin.getServer().getScheduler()
+                    BukkitTask task = plugin.getServer().getScheduler()
                             .runTaskLater(plugin, runnable, delay);
+                    trackTask(task);
+                    return task;
                 } else {
-                    return plugin.getServer().getScheduler()
+                    BukkitTask task = plugin.getServer().getScheduler()
                             .runTask(plugin, runnable);
+                    trackTask(task);
+                    return task;
                 }
             }
         }

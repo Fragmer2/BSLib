@@ -1,7 +1,9 @@
 package io.github.fragmer2.bslib.api.service;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -86,6 +88,18 @@ public final class Services {
     public static boolean has(Class<?> type, String name) {
         String k = key(type, name);
         return services.containsKey(k) || lazy.containsKey(k);
+    }
+
+    public static int registeredCount() {
+        return services.size();
+    }
+
+    public static int lazyCount() {
+        return lazy.size();
+    }
+
+    public static Set<String> serviceKeys() {
+        return new LinkedHashSet<>(services.keySet());
     }
 
     // ========== Listen for registration ==========
