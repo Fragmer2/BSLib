@@ -20,6 +20,8 @@ import io.github.fragmer2.bslib.api.task.Tasks;
 import io.github.fragmer2.bslib.api.thread.Async;
 import io.github.fragmer2.bslib.paper.command.PaperCommandRegistryFactory;
 import io.github.fragmer2.bslib.paper.gui.GuiManager;
+import io.github.fragmer2.bslib.paper.module.PaperModuleContext;
+import io.github.fragmer2.bslib.paper.module.PaperModuleManager;
 import io.github.fragmer2.bslib.paper.placeholder.PaperPlaceholderRegistry;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -33,10 +35,13 @@ import java.util.Arrays;
 import java.util.List;
 
 public class BSLibPlugin extends JavaPlugin {
+
     private static BSLibPlugin instance;
+
     private GuiManager guiManager;
     private ServiceContainer container;
     private ModuleManager moduleManager;
+    private PaperModuleManager paperModuleManager;
 
     @Override
     public void onEnable() {
@@ -64,7 +69,7 @@ public class BSLibPlugin extends JavaPlugin {
         // 6. Command Framework
         BSLib.setCommandRegistryFactory(new PaperCommandRegistryFactory());
 
-        // 7. Module Manager
+        // 7. API Module Manager (for FrameworkPlugin modules)
         moduleManager = new ModuleManager(this, container);
         BSLib.setModuleManager(moduleManager);
 
@@ -74,16 +79,26 @@ public class BSLibPlugin extends JavaPlugin {
         // 9. Interaction API
         Interact.init(this);
 
-        // Register core services
+        // 10. Register core services in DI
         container.register(GuiManager.class, guiManager);
         container.register(PaperPlaceholderRegistry.class, placeholderRegistry);
+
+        // 11. Paper Module Manager (for internal BSLib Paper modules)
+        PaperModuleContext paperContext = new PaperModuleContext(container);
+        paperModuleManager = new PaperModuleManager(this, paperContext);
+        paperModuleManager.enableAll();
 
         getLogger().info("BSLib enabled — all systems ready.");
     }
 
     @Override
     public void onDisable() {
+        // Disable Paper modules first (reverse order)
+        if (paperModuleManager != null) paperModuleManager.disableAll();
+
+        // Then disable API modules
         if (moduleManager != null) moduleManager.disableAll();
+
         if (guiManager != null) guiManager.cancel();
 
         Services.clear();
@@ -116,10 +131,11 @@ public class BSLibPlugin extends JavaPlugin {
         }
 
         switch (args[0].toLowerCase()) {
-            case "debug" -> handleDebug(sender);
-            case "dev" -> handleDev(sender);
-            case "reload" -> handleReload(sender, Arrays.copyOfRange(args, 1, args.length));
+            case "debug"   -> handleDebug(sender);
+            case "dev"     -> handleDev(sender);
+            case "reload"  -> handleReload(sender, Arrays.copyOfRange(args, 1, args.length));
             case "plugins" -> handlePlugins(sender);
+            case "modules" -> handleModules(sender);
             default -> sender.sendMessage("§cUnknown: " + args[0] + ". Use §e/bslib§c for help.");
         }
         return true;
@@ -129,10 +145,9 @@ public class BSLibPlugin extends JavaPlugin {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
             List<String> cmds = new ArrayList<>();
-            if (sender.hasPermission("bslib.debug")) cmds.add("debug");
-            if (sender.hasPermission("bslib.dev")) cmds.add("dev");
+            if (sender.hasPermission("bslib.debug")) cmds.addAll(List.of("debug", "plugins", "modules"));
+            if (sender.hasPermission("bslib.dev"))    cmds.add("dev");
             if (sender.hasPermission("bslib.reload")) cmds.add("reload");
-            if (sender.hasPermission("bslib.debug")) cmds.add("plugins");
             return filter(cmds, args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("reload")) {
@@ -168,6 +183,7 @@ public class BSLibPlugin extends JavaPlugin {
         sender.sendMessage("§e/bslib reload <plugin> §7— live reload a plugin");
         sender.sendMessage("§e/bslib reload hard <plugin> §7— full re-register reload");
         sender.sendMessage("§e/bslib plugins §7— list all FrameworkPlugin plugins");
+        sender.sendMessage("§e/bslib modules §7— list all active Paper modules");
     }
 
     private void handleDebug(CommandSender sender) {
@@ -178,7 +194,6 @@ public class BSLibPlugin extends JavaPlugin {
         Debug.enable();
         Debug.report(sender);
 
-        // Additional BSLib-specific info
         sender.sendMessage("");
         sender.sendMessage("§6§lBSLib Systems:");
         int fwCount = 0;
@@ -189,6 +204,7 @@ public class BSLibPlugin extends JavaPlugin {
         sender.sendMessage("  §7Active sessions: §f" + Bukkit.getOnlinePlayers().size());
         sender.sendMessage("  §7Dev mode players: §f" +
                 Bukkit.getOnlinePlayers().stream().filter(GuiInspector::isEnabled).count());
+        sender.sendMessage("  §7Paper modules: §f" + paperModuleManager.getEnabledCount());
     }
 
     private void handleDev(CommandSender sender) {
@@ -222,7 +238,6 @@ public class BSLibPlugin extends JavaPlugin {
             return;
         }
 
-        // Find the plugin
         Plugin target = Bukkit.getPluginManager().getPlugin(pluginName);
         if (target == null) {
             sender.sendMessage("§cPlugin not found: " + pluginName);
@@ -233,7 +248,6 @@ public class BSLibPlugin extends JavaPlugin {
             return;
         }
 
-        // Execute reload
         long start = System.currentTimeMillis();
         try {
             if (hard) {
@@ -271,10 +285,20 @@ public class BSLibPlugin extends JavaPlugin {
         }
     }
 
+    private void handleModules(CommandSender sender) {
+        if (!sender.hasPermission("bslib.debug")) {
+            sender.sendMessage("§cNo permission.");
+            return;
+        }
+        sender.sendMessage("§6§lBSLib Paper Modules:");
+        paperModuleManager.listModules().forEach(line -> sender.sendMessage("  " + line));
+    }
+
     // ========== Accessors ==========
 
-    public static BSLibPlugin getInstance() { return instance; }
-    public GuiManager getGuiManager() { return guiManager; }
-    public ServiceContainer getContainer() { return container; }
-    public ModuleManager getModuleManager() { return moduleManager; }
+    public static BSLibPlugin getInstance()            { return instance; }
+    public GuiManager getGuiManager()                  { return guiManager; }
+    public ServiceContainer getContainer()             { return container; }
+    public ModuleManager getModuleManager()            { return moduleManager; }
+    public PaperModuleManager getPaperModuleManager()  { return paperModuleManager; }
 }
