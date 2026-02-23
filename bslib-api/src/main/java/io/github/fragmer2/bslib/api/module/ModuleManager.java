@@ -16,6 +16,7 @@ public class ModuleManager {
     private final Logger logger;
     private final Map<String, BSModule> modules = new LinkedHashMap<>();
     private final Set<String> enabled = new HashSet<>();
+    private final List<String> enableOrder = new ArrayList<>();
 
     public ModuleManager(Plugin plugin, ServiceContainer container) {
         this.plugin = plugin;
@@ -48,19 +49,34 @@ public class ModuleManager {
      * Enable a specific module (resolves dependencies first).
      */
     public boolean enable(String moduleId) {
+        return enable(moduleId, new LinkedHashSet<>());
+    }
+
+    private boolean enable(String moduleId, Set<String> enabling) {
         if (enabled.contains(moduleId)) return true;
+        if (!enabling.add(moduleId)) {
+            logger.severe("[BSLib] Circular dependency detected while enabling: " + String.join(" -> ", enabling) + " -> " + moduleId);
+            return false;
+        }
 
         BSModule module = modules.get(moduleId);
         if (module == null) {
             logger.warning("[BSLib] Module not found: " + moduleId);
+            enabling.remove(moduleId);
             return false;
         }
 
         // Resolve dependencies first
         for (String dep : module.getDependencies()) {
             if (!enabled.contains(dep)) {
-                if (!enable(dep)) {
+                if (!modules.containsKey(dep)) {
+                    logger.severe("[BSLib] Cannot enable " + moduleId + ": dependency module is not registered: '" + dep + "'");
+                    enabling.remove(moduleId);
+                    return false;
+                }
+                if (!enable(dep, enabling)) {
                     logger.severe("[BSLib] Cannot enable " + moduleId + ": missing dependency '" + dep + "'");
+                    enabling.remove(moduleId);
                     return false;
                 }
             }
@@ -70,11 +86,15 @@ public class ModuleManager {
             ModuleContext ctx = new ModuleContext(plugin, container);
             module.onEnable(ctx);
             enabled.add(moduleId);
+            enableOrder.remove(moduleId);
+            enableOrder.add(moduleId);
             logger.info("[BSLib] Module enabled: " + module.getName() + " v" + module.getVersion());
+            enabling.remove(moduleId);
             return true;
         } catch (Exception e) {
             logger.severe("[BSLib] Failed to enable module: " + moduleId);
             e.printStackTrace();
+            enabling.remove(moduleId);
             return false;
         }
     }
@@ -102,6 +122,7 @@ public class ModuleManager {
                 e.printStackTrace();
             }
             enabled.remove(moduleId);
+            enableOrder.remove(moduleId);
             logger.info("[BSLib] Module disabled: " + module.getName());
         }
     }
@@ -110,7 +131,7 @@ public class ModuleManager {
      * Disable all modules in reverse order.
      */
     public void disableAll() {
-        List<String> sorted = new ArrayList<>(enabled);
+        List<String> sorted = new ArrayList<>(enableOrder);
         Collections.reverse(sorted);
         for (String id : sorted) {
             disable(id);

@@ -151,6 +151,10 @@ public abstract class FrameworkPlugin extends JavaPlugin {
      * Works even if the class doesn't implement Listener —
      * BSLib will wrap it automatically.
      */
+    /**
+     * @deprecated Prefer {@link #manage(Object)} for migration-safe lifecycle ownership.
+     */
+    @Deprecated(forRemoval = false, since = "1.0.1")
     protected void registerListener(Object handler) {
         BSLib.getContainer().inject(handler);
         Listener listener = wrapAsListener(handler);

@@ -30,4 +30,27 @@
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
     </repositories>
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>com.github.siom79.japicmp</groupId>
+                    <artifactId>japicmp-maven-plugin</artifactId>
+                    <version>0.18.5</version>
+                    <configuration>
+                        <parameter>
+                            <onlyModified>true</onlyModified>
+                            <ignoreMissingOldVersion>true</ignoreMissingOldVersion>
+                            <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+                            <breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
+                            <includes>
+                                <include>io.github.fragmer2.bslib.api.*</include>
+                            </includes>
+                        </parameter>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
 </project>
