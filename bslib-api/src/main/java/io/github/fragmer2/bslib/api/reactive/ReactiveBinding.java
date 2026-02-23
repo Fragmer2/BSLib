@@ -73,6 +73,14 @@ public final class ReactiveBinding {
         playerBindings.clear();
     }
 
+    public static int activePlayerCount() {
+        return playerBindings.size();
+    }
+
+    public static int activeBindingCount() {
+        return playerBindings.values().stream().mapToInt(List::size).sum();
+    }
+
     private static void track(Player player, Destroyable binding) {
         playerBindings.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>()).add(binding);
     }
@@ -139,20 +147,21 @@ public final class ReactiveBinding {
             player.setScoreboard(board);
 
             // Subscribe to changes
-            List<Runnable> unsubscribers = new ArrayList<>();
+            List<Subscription> subscriptions = new ArrayList<>();
             for (Map.Entry<Integer, Reactive<String>> entry : lines.entrySet()) {
                 int idx = entry.getKey();
                 Reactive<String> reactive = entry.getValue();
                 Team team = teams.get(idx);
 
-                reactive.onSet(val -> {
+                subscriptions.add(reactive.subscribeSet(val -> {
                     if (player.isOnline()) {
                         Tasks.sync().run(() -> team.prefix(MM.deserialize(val)));
                     }
-                });
+                }));
             }
 
             Destroyable binding = () -> {
+                subscriptions.forEach(Subscription::unsubscribe);
                 if (player.isOnline()) {
                     player.setScoreboard(manager.getMainScoreboard());
                 }
@@ -213,18 +222,20 @@ public final class ReactiveBinding {
             );
             player.showBossBar(bar);
 
+            List<Subscription> subscriptions = new ArrayList<>();
             if (title != null) {
-                title.onSet(val -> {
+                subscriptions.add(title.subscribeSet(val -> {
                     if (player.isOnline()) bar.name(MM.deserialize(val));
-                });
+                }));
             }
             if (progress != null) {
-                progress.onSet(val -> {
+                subscriptions.add(progress.subscribeSet(val -> {
                     if (player.isOnline()) bar.progress(Math.max(0, Math.min(1, val)));
-                });
+                }));
             }
 
             Destroyable binding = () -> {
+                subscriptions.forEach(Subscription::unsubscribe);
                 if (player.isOnline()) player.hideBossBar(bar);
             };
             track(player, binding);
