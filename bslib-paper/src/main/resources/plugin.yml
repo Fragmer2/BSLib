@@ -8,7 +8,7 @@ author: fragmer2
 commands:
   bslib:
     description: BSLib management commands
-    usage: /<command> [debug|dev|reload|plugins]
+    usage: /<command> [debug|doctor|inspect|dev|reload|plugins|modules]
     permission: bslib.admin
 
 permissions:
@@ -20,7 +20,7 @@ permissions:
       bslib.dev: true
       bslib.reload: true
   bslib.debug:
-    description: Access to /bslib debug and /bslib plugins
+    description: Access to /bslib debug, doctor, inspect, plugins, modules
     default: op
   bslib.dev:
     description: Access to /bslib dev (GUI inspector)
