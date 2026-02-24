@@ -1,23 +1,46 @@
 # BSLib Developer Guide
 
-## 1) What is BSLib
-BSLib is a framework layer for Minecraft plugin development on Paper. It gives you production-ready primitives for lifecycle, services, modules, tasks, reactive state, messaging, and capability contracts.
+> **Audience**: Paper plugin developers building real production plugins with BSLib.  
+> **Purpose**: learning path + practical workflows.  
+> **Use with**: `BSLib-API-DOCUMENTATION.md` (deep explanations) and `BSLib-REFERENCE.md` (quick lookup).
 
-### Why use it instead of raw Paper API?
-Raw Paper is powerful, but plugin teams repeatedly rebuild the same infrastructure:
-- bootstrapping and dependency wiring,
-- task lifecycle cleanup,
-- module startup order,
-- cross-plugin communication,
-- state propagation.
+---
 
-BSLib standardizes these patterns so you can focus on gameplay/business logic.
+## Learning Path
+1. [Getting Started](#1-getting-started)
+2. [Installation](#2-installation)
+3. [First Plugin Example](#3-first-plugin-example)
+4. [Core Concepts](#4-core-concepts)
+5. [Plugin Lifecycle](#5-plugin-lifecycle)
+6. [Modules System](#6-modules-system)
+7. [Commands](#7-commands)
+8. [Tasks & Scheduler](#8-tasks--scheduler)
+9. [Reactive System](#9-reactive-system)
+10. [Services & Messaging](#10-services--messaging)
+11. [Menus / UI](#11-menus--ui)
+12. [Threading Model](#12-threading-model)
+13. [Best Practices](#13-best-practices)
+14. [Common Mistakes](#14-common-mistakes)
+15. [Advanced Usage](#15-advanced-usage)
+16. [Full Example Plugin](#16-full-example-plugin)
+17. [API Reference](#17-api-reference)
 
-### Design philosophy
-- **Practical first**: APIs should be easy to use in real plugins.
-- **Lifecycle-safe**: registration and teardown are explicit.
-- **Owner-aware**: shared registries support plugin ownership.
-- **Composable**: systems work together (services + modules + tasks + reactive).
+---
+
+## 1) Getting Started
+
+### What BSLib solves
+BSLib removes repetitive framework work from Paper plugins:
+- lifecycle orchestration,
+- feature modularization,
+- task lifecycle tracking,
+- service wiring,
+- reactive state propagation,
+- cross-plugin contracts.
+
+### BSLib vs raw Paper API
+- **Raw Paper**: you manually manage system boundaries.
+- **BSLib**: you compose standardized framework systems and focus on gameplay/business logic.
 
 ---
 
@@ -33,38 +56,44 @@ BSLib standardizes these patterns so you can focus on gameplay/business logic.
 </repositories>
 ```
 
-### Dependencies
-Use API in your plugin code; use Paper module only if you need Paper integration/runtime from BSLib plugin package.
-
+### Maven dependencies (API usage)
 ```xml
-<dependencies>
-  <!-- BSLib API -->
-  <dependency>
-    <groupId>io.github.fragmer2</groupId>
-    <artifactId>bslib-api</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
-    <scope>provided</scope>
-  </dependency>
-
-  <!-- Paper API -->
-  <dependency>
-    <groupId>io.papermc.paper</groupId>
-    <artifactId>paper-api</artifactId>
-    <version>1.21.1-R0.1-SNAPSHOT</version>
-    <scope>provided</scope>
-  </dependency>
-</dependencies>
+<dependency>
+  <groupId>io.github.fragmer2</groupId>
+  <artifactId>bslib-api</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <scope>provided</scope>
+</dependency>
 ```
 
-### API vs Paper module
-- **`bslib-api`**: contracts and core framework API used by plugins.
-- **`bslib-paper`**: Paper runtime/plugin-side integration implementation.
+### Maven dependencies (Paper plugin usage)
+```xml
+<dependency>
+  <groupId>io.papermc.paper</groupId>
+  <artifactId>paper-api</artifactId>
+  <version>1.21.1-R0.1-SNAPSHOT</version>
+  <scope>provided</scope>
+</dependency>
+```
+
+### API vs Paper integration
+- `bslib-api`: plugin-facing framework API.
+- `bslib-paper`: Paper runtime integration implementation shipped by BSLib plugin.
 
 ---
 
-## 3) Creating Your First Plugin Using BSLib
+## 3) First Plugin Example
 
-### Step 1 — Main class
+### `plugin.yml`
+```yaml
+name: ShopPlugin
+main: com.example.shop.ShopPlugin
+version: 1.0.0
+api-version: '1.21'
+depend: [BSLib]
+```
+
+### Minimal plugin main class
 ```java
 import io.github.fragmer2.bslib.api.FrameworkPlugin;
 import io.github.fragmer2.bslib.api.service.Services;
@@ -72,121 +101,78 @@ import io.github.fragmer2.bslib.api.service.Services;
 public final class ShopPlugin extends FrameworkPlugin {
     @Override
     public void onFrameworkEnable() {
-        getLogger().info("ShopPlugin enabled with BSLib");
         Services.provide(this, ShopService.class, new ShopService());
+        getLogger().info("ShopPlugin started");
     }
 
     @Override
     public void onFrameworkDisable() {
         Services.unregisterOwner(this);
     }
+
+    public static final class ShopService {}
 }
 ```
-
-### Step 2 — plugin.yml (minimal)
-```yaml
-name: ShopPlugin
-version: 1.0.0
-main: com.example.shop.ShopPlugin
-api-version: '1.21'
-depend: [BSLib]
-```
-
-### Step 3 — Startup behavior
-In `onFrameworkEnable()` register services/modules/listeners/tasks.
-In `onFrameworkDisable()` unregister owner resources and cancel long-running jobs.
 
 ---
 
 ## 4) Core Concepts
 
-## Runtime
-BSLib runtime is the active framework environment initialized by BSLib plugin.
+### Runtime
+Framework runtime exists between `onFrameworkEnable()` and `onFrameworkDisable()`.
 
-**Lifecycle flow (text diagram)**
-`Plugin load -> onFrameworkEnable -> runtime operations -> onFrameworkDisable -> cleanup`
+### Owner isolation
+Systems that share global state support owner-scoped registration and teardown.
 
-**Best practices**
-- Register all framework resources during enable.
-- Teardown by owner during disable.
+### Services
+Runtime registry for type-keyed contracts.
 
-## Owner isolation
-Owner isolation means shared systems (services, messaging, capabilities) can scope state to a specific plugin.
+### Modules
+Deterministic feature units with dependency-aware lifecycle.
 
-**Lifecycle flow**
-`register(owner) -> use -> unregisterOwner(owner)`
+### Tasks
+Tracked scheduling API with explicit handles.
 
-**Best practices**
-- Always prefer owner-aware overloads.
-- Never leave cross-plugin registrations without owner cleanup.
+### Reactive
+Observable state graph with cleanup semantics.
 
-## Services
-Service registry for cross-component/plugin contracts.
+### Messaging
+Topic-based local pub/sub between plugins.
 
-**Usage**
-```java
-Services.provide(this, EconomyService.class, new EconomyServiceImpl());
-EconomyService eco = Services.get(EconomyService.class);
-```
-
-## Modules
-Feature units with dependencies and deterministic lifecycle.
-
-**Usage**
-```java
-moduleManager.register(new EconomyModule());
-moduleManager.enableAll();
-```
-
-## Reactive system
-Reactive values propagate changes to subscribers and derived streams.
-
-**Usage**
-```java
-Reactive<Integer> coins = Reactive.of(0);
-coins.subscribeSet(v -> player.sendMessage("Coins: " + v));
-coins.increment();
-```
-
-## Task system
-Scheduler wrapper with tracked task handles.
-
-**Usage**
-```java
-FrameworkTask task = Tasks.sync().repeat(20).runTracked(this::tickShop);
-```
-
-## Messaging
-Local topic-based pub/sub between plugins.
-
-**Usage**
-```java
-PluginMessageBus.subscribe(this, "shop/reload", (String msg) -> reloadShop());
-PluginMessageBus.publish("shop/reload", "now");
-```
-
-## Capabilities
-Declare what your plugin provides/requires at runtime.
-
-**Usage**
-```java
-PluginCapabilityRegistry.provide(this, "economy");
-PluginCapabilityRegistry.require(this, "database");
-```
+### Capabilities
+Declare provided/required plugin-level contracts.
 
 ---
 
-## 5) Modules
+## 5) Plugin Lifecycle
+
+### Lifecycle flow
+`enable -> register systems -> operate -> disable -> cleanup all owner resources`
+
+### Required cleanup checklist
+- `Services.unregisterOwner(this)`
+- `PluginMessageBus.unregisterOwner(this)`
+- `PluginCapabilityRegistry.unregisterOwner(this)`
+- cancel repeating `FrameworkTask`s
+- unsubscribe/destroy reactive resources
+- disable modules
+
+---
+
+## 6) Modules System
 
 ### Create a module
 ```java
+import io.github.fragmer2.bslib.api.module.BSModule;
+import io.github.fragmer2.bslib.api.module.ModuleContext;
+
 public final class EconomyModule implements BSModule {
     @Override public String getId() { return "economy"; }
     @Override public String[] getDependencies() { return new String[] {"database"}; }
 
     @Override
     public void onEnable(ModuleContext context) {
-        // register services/listeners
+        context.plugin().getLogger().info("Economy enabled");
     }
 
     @Override
@@ -196,33 +182,59 @@ public final class EconomyModule implements BSModule {
 }
 ```
 
-### Register and run
+### Register and enable
 ```java
-moduleManager.register(new DatabaseModule());
-moduleManager.register(new EconomyModule());
-moduleManager.enableAll();
+getModuleManager().register(new DatabaseModule());
+getModuleManager().register(new EconomyModule());
+getModuleManager().enableAll();
 ```
-
-### Dependency handling
-If dependency is missing/circular, BSLib prevents unsafe enable order and logs failure.
 
 ---
 
-## 6) Tasks API
+## 7) Commands
 
-### Key rules
-- Use `runTracked(...)` in production paths.
-- Keep returned `FrameworkTask` for cancellation.
-- Cancel repeating tasks on disable.
+### Basic command object registration
+```java
+public final class AdminCommands {
+    @io.github.fragmer2.bslib.api.command.Command("shop.reload")
+    public void reload(org.bukkit.command.CommandSender sender) {
+        sender.sendMessage("Reloaded");
+    }
+}
+
+@Override
+public void onFrameworkEnable() {
+    getCommandRegistry().register(new AdminCommands());
+}
+```
+
+### Good command practice
+- keep command methods short,
+- move logic into services/modules,
+- never block with database/network work on command thread.
+
+---
+
+## 8) Tasks & Scheduler
+
+### Sync task
+```java
+FrameworkTask syncTask = Tasks.sync().runTracked(() -> player.sendMessage("Hello"));
+```
+
+### Async task
+```java
+FrameworkTask asyncTask = Tasks.async().runTracked(() -> repository.refreshCache());
+```
 
 ### Delayed task
 ```java
-FrameworkTask delayed = Tasks.sync().delay(40).runTracked(() -> openShop(player));
+FrameworkTask delayed = Tasks.sync().delay(40).runTracked(() -> openMenu(player));
 ```
 
 ### Repeating task
 ```java
-FrameworkTask repeating = Tasks.async().repeat(100).runTracked(cache::refresh);
+FrameworkTask repeating = Tasks.async().repeat(20 * 30).runTracked(cache::refresh);
 ```
 
 ### Self-cancel task
@@ -232,169 +244,145 @@ Tasks.sync().repeat(20).runTracked(task -> {
 });
 ```
 
-### Sync vs async
-- `sync()` => main-thread Bukkit-safe operations.
-- `async()` => non-Bukkit heavy work (IO/CPU); hand off back to sync for Bukkit writes.
+### Cleanup
+Store handles and cancel on disable.
 
 ---
 
-## 7) Reactive API
+## 9) Reactive System
 
-### Reactive value
+### Basic reactive value
 ```java
-Reactive<Integer> stock = Reactive.of(10);
+Reactive<Integer> coins = Reactive.of(0);
+Subscription sub = coins.subscribeSet(v -> player.sendMessage("Coins: " + v));
+coins.increment();
 ```
 
-### Subscribe
+### Operators
 ```java
-Subscription sub = stock.subscribeSet(v -> bossBar.setTitle("Stock: " + v));
+Reactive<Integer> throttled = coins.throttle(5);
+Reactive<Integer> debounced = coins.debounce(10);
+Reactive<String> line = coins.map(v -> "Coins: " + v).distinctUntilChanged();
 ```
 
 ### Batching
 ```java
-stock.beginBatch();
-stock.set(11);
-stock.set(12);
-stock.endBatch();
+coins.beginBatch();
+coins.set(10);
+coins.set(11);
+coins.endBatch();
 ```
 
-### Debounce / throttle
-```java
-Reactive<Integer> debounced = stock.debounce(10);
-Reactive<Integer> throttled = stock.throttle(5);
-```
-
-### Disposal
+### Lifecycle
 ```java
 sub.unsubscribe();
-debounced.destroy();
 throttled.destroy();
-stock.destroy();
-```
-
-### Practical gameplay/UI example
-```java
-Reactive<Integer> coins = Reactive.of(0);
-Reactive<String> line = coins.map(v -> "Coins: " + v).distinctUntilChanged();
-Subscription hud = line.subscribeSet(text -> sidebar.updateLine("coins", text));
+debounced.destroy();
+line.destroy();
+coins.destroy();
 ```
 
 ---
 
-## 8) Services API
+## 10) Services & Messaging
 
-### Register service
+### Services
 ```java
-Services.provide(this, PlayerDataService.class, new SqlPlayerDataService(dataSource));
+Services.provide(this, PlayerDataService.class, new SqlPlayerDataService(ds));
+PlayerDataService svc = Services.get(PlayerDataService.class);
 ```
 
-### Get service
+### Messaging
 ```java
-PlayerDataService service = Services.get(PlayerDataService.class);
-```
-
-### Owner isolation and collision protection
-- owner-aware registration blocks accidental overwrite from another plugin owner.
-- teardown by owner removes all owned entries.
-
-### Cleanup
-```java
-Services.unregisterOwner(this);
-```
-
----
-
-## 9) Messaging System
-
-### Subscriber
-```java
-Subscription sub = PluginMessageBus.subscribe(this, "economy/changed", (EconomyChanged msg) -> {
-    cache.invalidate(msg.playerId());
+Subscription sub = PluginMessageBus.subscribe(this, "shop/purchase", (PurchaseEvent event) -> {
+    audit(event);
 });
+
+PluginMessageBus.publish("shop/purchase", new PurchaseEvent(player.getUniqueId()));
 ```
 
-### Publisher
-```java
-PluginMessageBus.publish("economy/changed", new EconomyChanged(uuid));
-```
+### Workflow pattern
+`player joins -> load data service -> update reactive state -> publish event -> save on schedule -> cleanup on quit/disable`
 
-### Cleanup
+---
+
+## 11) Menus / UI
+
+If your plugin uses BSLib menu APIs, treat each open view as session-scoped:
+- open on main thread,
+- bind UI to reactive values,
+- unsubscribe/destroy bindings when menu closes or player quits.
+
 ```java
-PluginMessageBus.unregisterOwner(this);
-sub.unsubscribe();
+Reactive<Integer> stock = Reactive.of(20);
+Subscription ui = stock.subscribeSet(v -> menuView.update());
+// on close: ui.unsubscribe(); stock.destroy();
 ```
 
 ---
 
-## 10) Capability System
+## 12) Threading Model
 
-### Register capabilities
-```java
-PluginCapabilityRegistry.provide(this, "economy", "shop-api");
-PluginCapabilityRegistry.require(this, "database", "permissions");
-```
+### Main-thread safe
+- Bukkit entity/world/inventory mutations.
 
-### Validate dependencies
-```java
-List<String> missing = PluginCapabilityRegistry.validateMissing(this);
-if (!missing.isEmpty()) {
-    throw new IllegalStateException("Missing capabilities: " + missing);
-}
-```
+### Async safe
+- IO, serialization, database calls, CPU transforms.
 
-### Optional integration pattern
-```java
-if (PluginCapabilityRegistry.validateMissing(this).isEmpty()) {
-    // enable optional path
-}
-```
+### Unsafe patterns
+- accessing Bukkit mutable world state inside async task callbacks.
+
+### Test runtime limitation
+`bslib-api` tests run without Bukkit server. Use scheduler abstraction/test adapters and avoid direct Bukkit runtime assumptions.
 
 ---
 
-## 11) Error Handling
+## 13) Best Practices
 
-Use `FrameworkExceptionHandler` when wrapping custom execution boundaries.
+- Prefer owner-aware APIs.
+- Keep module boundaries clean.
+- Store/cancel repeating task handles.
+- Destroy transient reactive graphs.
+- Wrap boundary code with structured error context.
+- Validate capabilities at startup.
 
+---
+
+## 14) Common Mistakes
+
+- Forgetting teardown on disable.
+- Running blocking logic in command handlers.
+- Async Bukkit world mutation.
+- Global static state without owner model.
+- Long-lived reactive subscriptions tied to players.
+
+---
+
+## 15) Advanced Usage
+
+### Optional integration via capabilities
+```java
+PluginCapabilityRegistry.provide(this, "shop-api");
+PluginCapabilityRegistry.require(this, "economy");
+
+if (!PluginCapabilityRegistry.validateMissing(this).isEmpty()) {
+    getLogger().warning("Economy integration disabled");
+}
+```
+
+### Error boundary
 ```java
 try {
-    runCriticalLogic();
+    criticalWork();
 } catch (Throwable error) {
-    FrameworkExceptionHandler.handle(
-        this,
-        FrameworkExceptionHandler.Source.SERVICE,
-        error,
-        Map.of("source", "service", "operation", "runCriticalLogic")
-    );
+    FrameworkExceptionHandler.handle(this, FrameworkExceptionHandler.Source.SERVICE, error,
+            java.util.Map.of("source", "service", "operation", "criticalWork"));
 }
 ```
 
-Prefer structured context map (`source`, `action`, identifiers) for debugging in production.
-
 ---
 
-## 12) Best Practices
-
-### Reload safety
-- treat reload as full lifecycle transition.
-- unregister owner resources (`Services`, `PluginMessageBus`, `PluginCapabilityRegistry`).
-
-### Avoid memory leaks
-- cancel repeating tasks.
-- unsubscribe reactive subscriptions.
-- `destroy()` reactive graphs tied to session/player/gui.
-
-### Async safety
-- never call Bukkit world/entity/inventory APIs from async tasks.
-- do heavy work async, apply result sync.
-
-### Lifecycle rules
-- enable: register all dependencies.
-- disable: reverse cleanup order.
-- keep module enable/disable idempotent.
-
----
-
-## 13) Complete Example Plugin
+## 16) Full Example Plugin
 
 ```java
 package com.example.shop;
@@ -409,56 +397,51 @@ import io.github.fragmer2.bslib.api.task.FrameworkTask;
 import io.github.fragmer2.bslib.api.task.Tasks;
 
 public final class ShopPlugin extends FrameworkPlugin {
-    private FrameworkTask autosaveTask;
-    private Reactive<Integer> globalStock;
+    private FrameworkTask autosave;
+    private Reactive<Integer> stock;
 
     @Override
     public void onFrameworkEnable() {
         Services.provide(this, ShopService.class, new ShopService());
 
-        globalStock = Reactive.of(100);
-
-        getModuleManager().register(new ShopModule(globalStock));
+        stock = Reactive.of(100);
+        getModuleManager().register(new ShopModule(stock));
         getModuleManager().enableAll();
 
-        autosaveTask = Tasks.async().repeat(20 * 30).runTracked(() -> {
-            Services.get(ShopService.class).saveAll();
-        });
+        autosave = Tasks.async().repeat(20 * 30).runTracked(() -> Services.get(ShopService.class).saveAll());
     }
 
     @Override
     public void onFrameworkDisable() {
-        if (autosaveTask != null) autosaveTask.cancel();
-        if (globalStock != null) globalStock.destroy();
+        if (autosave != null) autosave.cancel();
+        if (stock != null) stock.destroy();
 
         getModuleManager().disableAll();
         Services.unregisterOwner(this);
+        io.github.fragmer2.bslib.api.messaging.PluginMessageBus.unregisterOwner(this);
+        io.github.fragmer2.bslib.api.capability.PluginCapabilityRegistry.unregisterOwner(this);
+    }
+
+    public static final class ShopService {
+        public void saveAll() {}
     }
 
     public static final class ShopModule implements BSModule {
         private final Reactive<Integer> stock;
-        private Subscription stockLogger;
+        private Subscription subscription;
 
-        public ShopModule(Reactive<Integer> stock) {
-            this.stock = stock;
-        }
+        public ShopModule(Reactive<Integer> stock) { this.stock = stock; }
 
         @Override public String getId() { return "shop"; }
 
         @Override
         public void onEnable(ModuleContext context) {
-            stockLogger = stock.subscribeSet(v -> context.plugin().getLogger().info("Stock now: " + v));
+            subscription = stock.subscribeSet(v -> context.plugin().getLogger().info("Stock=" + v));
         }
 
         @Override
         public void onDisable() {
-            if (stockLogger != null) stockLogger.unsubscribe();
-        }
-    }
-
-    public static final class ShopService {
-        public void saveAll() {
-            // persist data
+            if (subscription != null) subscription.unsubscribe();
         }
     }
 }
@@ -466,28 +449,9 @@ public final class ShopPlugin extends FrameworkPlugin {
 
 ---
 
-## 14) Migration Guide (Raw Paper -> BSLib)
+## 17) API Reference
 
-### Scheduler migration
-- Before: raw `BukkitScheduler` ids/manual tracking.
-- After: `Tasks.*().runTracked(...)` + `FrameworkTask.cancel()`.
+- **Deep API walkthrough**: `BSLib-API-DOCUMENTATION.md`
+- **Quick lookup / signature inventory**: `BSLib-REFERENCE.md`
 
-### Service wiring migration
-- Before: static singleton + manual init order.
-- After: `Services.provide(owner, type, instance)` + owner teardown.
-
-### Feature lifecycle migration
-- Before: large plugin class with mixed responsibilities.
-- After: `BSModule` decomposition with dependency-aware enable order.
-
-### Reactive state migration
-- Before: imperative listener update chains.
-- After: `Reactive<T>` streams + derived values + explicit disposal.
-
-### Cross-plugin messaging migration
-- Before: ad-hoc shared static hooks.
-- After: `PluginMessageBus` topic contract and owner unregister.
-
----
-
-This guide is intentionally practical: copy sections into your plugin, then enforce strict lifecycle cleanup and thread-safe boundaries from day one.
+Use this guide for implementation flow, then switch to the reference docs for edge-case semantics and exact signatures.

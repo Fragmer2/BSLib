@@ -1,5 +1,15 @@
 # BSLib Reference
 
+> **Document role**: Quick lookup reference for public API types and signatures in `bslib-api`.  
+> **Use with**: `BSLib-DEVELOPER-GUIDE.md` (how to build plugins) and `BSLib-API-DOCUMENTATION.md` (deep behavior explanations).
+
+## Quick Navigation
+- Build and workflow guidance: `BSLib-DEVELOPER-GUIDE.md`
+- Detailed semantic explanations: `BSLib-API-DOCUMENTATION.md`
+- Exact class/member lookup: this file
+
+---
+
 ## 1. Framework Overview
 BSLib is a framework API for Paper plugin development that standardizes runtime lifecycle, modular composition, service discovery, tracked scheduling, reactive state propagation, and cross-plugin contracts. This document is the advanced source-of-truth reference for plugin developers consuming `bslib-api`.
 

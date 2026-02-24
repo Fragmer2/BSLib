@@ -1,5 +1,15 @@
 # BSLib API Documentation
 
+> **Document role**: Deep API explanations and system semantics for `bslib-api`.  
+> **Learning order**: Start with `BSLib-DEVELOPER-GUIDE.md`, then use this file for detailed behavior and design-time decisions, then `BSLib-REFERENCE.md` for quick signature lookup.
+
+## Navigation
+- Beginner-to-production implementation flow: `BSLib-DEVELOPER-GUIDE.md`
+- Deep explanations per package/class/system: this document
+- Fast method/class lookup: `BSLib-REFERENCE.md`
+
+---
+
 ## Overview
 BSLib is a reusable Java framework API for Minecraft plugin development that standardizes lifecycle, services, tasks, modules, state/reactive flows, and UX abstractions. It is designed so plugin teams build features instead of repeatedly implementing framework plumbing.
 
