@@ -1,6 +1,7 @@
 package io.github.fragmer2.bslib.api.di;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -90,6 +91,9 @@ public class ServiceContainer {
                 }
 
                 if (service != null) {
+                    if (Modifier.isFinal(field.getModifiers())) {
+                        throw new IllegalStateException("Cannot inject into final field: " + field.getName() + " in " + clazz.getName());
+                    }
                     field.setAccessible(true);
                     try {
                         field.set(target, service);
@@ -110,10 +114,10 @@ public class ServiceContainer {
 
         Supplier<?> supplier = lazyServices.get(key);
         if (supplier != null) {
-            service = supplier.get();
-            services.put(key, service);
-            lazyServices.remove(key);
-            return service;
+            return services.computeIfAbsent(key, k -> {
+                Supplier<?> s = lazyServices.remove(k);
+                return s != null ? s.get() : null;
+            });
         }
         return null;
     }
