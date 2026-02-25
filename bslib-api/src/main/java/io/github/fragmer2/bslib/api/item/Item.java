@@ -93,6 +93,10 @@ public class Item {
         return this;
     }
 
+    public Item customModelData(int id) {
+        return model(id);
+    }
+
     /**
      * Устанавливает текстуру головы игрока (по никнейму).
      */
